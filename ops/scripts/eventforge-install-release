@@ -1,0 +1,76 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ $# -ne 1 || ! "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+  echo "usage: eventforge-install-release <immutable-release-tag>" >&2
+  exit 64
+fi
+
+version="$1"
+: "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required in /etc/eventforge/release.env}"
+
+release_root="/opt/eventforge/releases"
+release_dir="${release_root}/${version}"
+api_name="eventforge-api-${version}"
+worker_name="eventforge-worker-${version}"
+checksum_name="SHA256SUMS"
+old_release="$(readlink -f /opt/eventforge/current 2>/dev/null || true)"
+
+if [[ -d "$release_dir" ]]; then
+  echo "release already exists: $release_dir" >&2
+  exit 1
+fi
+
+install -d -o root -g eventforge -m 0750 "$release_root"
+install -d -o root -g eventforge -m 0750 "$release_dir"
+
+auth_args=()
+if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+  auth_args=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+fi
+
+release_json="$(curl --fail --silent --show-error --location "${auth_args[@]}" \
+  "https://api.github.com/repos/${GITHUB_REPOSITORY}/releases/tags/${version}")"
+download_asset() {
+  local asset="$1"
+  local url
+  url="$(jq -er --arg name "$asset" '.assets[] | select(.name == $name) | .browser_download_url' <<<"$release_json")"
+  curl --fail --silent --show-error --location "${auth_args[@]}" --output "${release_dir}/${asset}" "$url"
+}
+
+download_asset "$api_name"
+download_asset "$worker_name"
+download_asset "$checksum_name"
+
+(
+  cd "$release_dir"
+  shasum -a 256 --check --ignore-missing "$checksum_name"
+)
+chmod 0750 "${release_dir}/${api_name}" "${release_dir}/${worker_name}"
+ln -sfn "$release_dir" /opt/eventforge/current
+
+rollback() {
+  local status="$?"
+  if [[ -n "$old_release" ]]; then
+    ln -sfn "$old_release" /opt/eventforge/current
+    systemctl restart eventforge-api.service eventforge-worker.service || true
+  fi
+  echo "release ${version} failed; restored previous release" >&2
+  exit "$status"
+}
+trap rollback ERR
+
+systemctl restart eventforge-api.service
+for _ in {1..18}; do
+  if curl --fail --silent --show-error --max-time 2 http://127.0.0.1:8080/readyz >/dev/null; then
+    systemctl restart eventforge-worker.service
+    trap - ERR
+    echo "release ${version} installed successfully"
+    exit 0
+  fi
+  sleep 5
+done
+
+echo "API never became ready" >&2
+exit 1
+

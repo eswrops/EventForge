@@ -1,0 +1,24 @@
+tenancy_ocid         = "ocid1.tenancy.oc1..replace-me"
+compartment_ocid     = "ocid1.compartment.oc1..replace-me"
+region               = "ap-mumbai-1"
+vcn_ocid             = "ocid1.vcn.oc1..replace-me"
+app_subnet_ocid      = "ocid1.subnet.oc1..replace-me"
+lb_subnet_ocid       = "ocid1.subnet.oc1..replace-me"
+mysql_subnet_ocid    = "ocid1.subnet.oc1..replace-me"
+load_balancer_ocid   = "ocid1.loadbalancer.oc1..replace-me"
+load_balancer_public_ip = "129.159.239.48"
+mysql_db_system_ocid = "ocid1.mysqldbsystem.oc1..replace-me"
+mysql_private_ip     = "10.0.3.18"
+api_private_ips = {
+  vm1 = "10.0.4.10"
+  vm2 = "10.0.4.11"
+}
+operator_ssh_cidr = "203.0.113.10/32"
+cloudflare_origin_cidrs = ["173.245.48.0/20"] # Replace with the complete reviewed published list.
+cloudflare_account_id = "replace-me"
+cloudflare_zone_id    = "replace-me"
+cloudflare_api_token  = "set-through-TF_VAR_cloudflare_api_token-instead"
+root_domain           = "example.com"
+operations_topic_id   = "ocid1.onstopic.oc1..replace-me"
+notification_email    = "ops@example.com"
+

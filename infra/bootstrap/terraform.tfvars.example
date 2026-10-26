@@ -1,0 +1,14 @@
+tenancy_ocid             = "ocid1.tenancy.oc1..replace-me"
+compartment_ocid         = "ocid1.compartment.oc1..replace-me"
+region                   = "ap-mumbai-1"
+object_storage_namespace = "replace-me"
+instance_ocids = [
+  "ocid1.instance.oc1..replace-vm1",
+  "ocid1.instance.oc1..replace-vm2",
+]
+notification_email = "ops@example.com"
+
+# Create this statement from the OCI identity-domain federation wizard. It must
+# constrain the GitHub Actions principal to your production environment.
+github_oidc_policy_statement = "Allow any-user to inspect compartments in compartment id ocid1.compartment.oc1..replace-me where request.principal.type = 'workload'"
+

@@ -1,0 +1,5 @@
+bucket    = "eventforge-tfstate-prod"
+namespace = "replace-with-object-storage-namespace"
+key       = "platform/terraform.tfstate"
+region    = "replace-with-region"
+

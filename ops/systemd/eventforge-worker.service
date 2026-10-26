@@ -1,0 +1,26 @@
+[Unit]
+Description=EventForge worker
+After=network-online.target eventforge-api.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=eventforge
+Group=eventforge
+EnvironmentFile=/etc/eventforge/worker.env
+WorkingDirectory=/var/lib/eventforge
+ExecStart=/opt/eventforge/current/eventforge-worker
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=60
+MemoryMax=192M
+TasksMax=128
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/eventforge
+
+[Install]
+WantedBy=multi-user.target
+

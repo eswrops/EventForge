@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+: "${MYSQL_HOST:?MYSQL_HOST is required}"
+: "${MYSQL_USER:?MYSQL_USER is required}"
+: "${MYSQL_PASSWORD_FILE:?MYSQL_PASSWORD_FILE is required}"
+: "${BACKUP_BUCKET:?BACKUP_BUCKET is required}"
+: "${BACKUP_RETENTION_DAYS:=14}"
+
+if [[ ! -r "$MYSQL_PASSWORD_FILE" ]]; then
+  echo "MySQL password file is not readable: $MYSQL_PASSWORD_FILE" >&2
+  exit 1
+fi
+
+backup_dir="/var/lib/eventforge/backups"
+install -d -m 0750 "$backup_dir"
+timestamp="$(date -u +%Y-%m-%dT%H%M%SZ)"
+object_name="mysql/eventforge-${timestamp}.sql.gz"
+archive_path="${backup_dir}/$(basename "$object_name")"
+defaults_file="$(mktemp)"
+trap 'rm -f "$defaults_file" "$archive_path"' EXIT
+chmod 0600 "$defaults_file"
+
+cat >"$defaults_file" <<EOF
+[client]
+host=${MYSQL_HOST}
+user=${MYSQL_USER}
+password=$(<"$MYSQL_PASSWORD_FILE")
+EOF
+
+mysqldump --defaults-extra-file="$defaults_file" \
+  --single-transaction --routines --events --set-gtid-purged=OFF \
+  eventforge | gzip -9 >"$archive_path"
+
+oci os object put --auth instance_principal --bucket-name "$BACKUP_BUCKET" \
+  --file "$archive_path" --name "$object_name" --force
+
+# Files use a sortable ISO-8601 name, so cleanup never needs to parse cloud
+# metadata. A failed deletion is fatal: alerting should expose retention drift.
+for ((age = BACKUP_RETENTION_DAYS; age < BACKUP_RETENTION_DAYS + 7; age++)); do
+  prefix="mysql/eventforge-$(date -u -d "${age} days ago" +%Y-%m-%d)"
+  while IFS= read -r name; do
+    [[ -z "$name" || "$name" == "null" ]] && continue
+    oci os object delete --auth instance_principal --bucket-name "$BACKUP_BUCKET" \
+      --name "$name" --force
+  done < <(oci os object list --auth instance_principal --bucket-name "$BACKUP_BUCKET" \
+    --prefix "$prefix" --query 'data[].name' --raw-output)
+done
+

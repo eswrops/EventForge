@@ -1,0 +1,62 @@
+name: Publish frontend
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency:
+      group: eventforge-production-frontend
+      cancel-in-progress: false
+    env:
+      OCI_AUTH: WorkloadIdentityFederation
+      OCI_REGION: ${{ vars.OCI_REGION }}
+      TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      TF_VAR_release_tag: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+      - name: Build frontend when application source is available
+        shell: bash
+        run: |
+          if [[ -f frontend/Cargo.toml ]]; then
+            cargo install trunk --locked
+            trunk build --release --dist infra/frontend/public --filehash false --config frontend/Trunk.toml
+          else
+            echo 'No frontend Cargo workspace yet; publishing the checked-in placeholder asset.'
+          fi
+      - name: Configure OCI workload federation
+        env:
+          OCI_WIF_CONFIG_JSON: ${{ secrets.OCI_WIF_CONFIG_JSON }}
+        run: scripts/ci/configure-oci-wif.sh
+      - name: Write protected inputs and initialize state
+        working-directory: infra/frontend
+        env:
+          TFVARS: ${{ secrets.TF_VARS_FRONTEND }}
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          OCI_OBJECT_STORAGE_NAMESPACE: ${{ vars.OCI_OBJECT_STORAGE_NAMESPACE }}
+        run: |
+          test -n "$TFVARS" && test -n "$TF_STATE_BUCKET" && test -n "$OCI_OBJECT_STORAGE_NAMESPACE"
+          printf '%s' "$TFVARS" > terraform.auto.tfvars
+          cat > backend.hcl <<EOF
+          bucket    = "$TF_STATE_BUCKET"
+          namespace = "$OCI_OBJECT_STORAGE_NAMESPACE"
+          key       = "frontend/terraform.tfstate"
+          region    = "${OCI_REGION}"
+          EOF
+          terraform init -input=false -backend-config=backend.hcl
+      - name: Deploy Worker static assets
+        working-directory: infra/frontend
+        run: terraform apply -input=false -auto-approve
+

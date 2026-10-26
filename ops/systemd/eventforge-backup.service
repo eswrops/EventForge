@@ -1,0 +1,14 @@
+[Unit]
+Description=Create and upload an EventForge MySQL backup
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=eventforge
+Group=eventforge
+EnvironmentFile=/etc/eventforge/backup.env
+ExecStart=/usr/local/lib/eventforge/eventforge-backup
+Nice=10
+IOSchedulingClass=best-effort
+

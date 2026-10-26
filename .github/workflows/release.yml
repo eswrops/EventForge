@@ -1,0 +1,51 @@
+name: Build and release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Immutable release tag, for example v0.1.0'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+      - name: Test Rust workspace when present
+        shell: bash
+        run: |
+          if [[ -f Cargo.toml ]]; then
+            cargo fmt --all -- --check
+            cargo clippy --workspace --all-targets -- -D warnings
+            cargo test --workspace
+          else
+            echo 'No Rust workspace yet; infrastructure-only release skipped.'
+          fi
+      - name: Package immutable release assets
+        shell: bash
+        run: |
+          version="${{ inputs.version || github.ref_name }}"
+          mkdir -p release
+          if [[ -x "target/x86_64-unknown-linux-gnu/release/eventforge-api" && -x "target/x86_64-unknown-linux-gnu/release/eventforge-worker" ]]; then
+            cp "target/x86_64-unknown-linux-gnu/release/eventforge-api" "release/eventforge-api-${version}"
+            cp "target/x86_64-unknown-linux-gnu/release/eventforge-worker" "release/eventforge-worker-${version}"
+            (cd release && shasum -a 256 eventforge-api-* eventforge-worker-* > SHA256SUMS)
+          else
+            echo 'Rust binaries not present; refusing to publish an incomplete release.' >&2
+            exit 1
+          fi
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ inputs.version || github.ref_name }}" release/* --generate-notes
+

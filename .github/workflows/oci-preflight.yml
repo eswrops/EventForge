@@ -1,0 +1,29 @@
+name: OCI free-tier preflight
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      OCI_AUTH: WorkloadIdentityFederation
+      OCI_REGION: ${{ vars.OCI_REGION }}
+      OCI_COMPARTMENT_OCID: ${{ vars.OCI_COMPARTMENT_OCID }}
+      MYSQL_PRIVATE_IP: 10.0.3.18
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install OCI CLI
+        run: python3 -m pip install --disable-pip-version-check oci-cli
+      - name: Configure OCI workload federation
+        env:
+          OCI_WIF_CONFIG_JSON: ${{ secrets.OCI_WIF_CONFIG_JSON }}
+        run: scripts/ci/configure-oci-wif.sh
+      - name: Verify existing Always Free inventory
+        run: scripts/oci-free-tier-preflight.sh
+

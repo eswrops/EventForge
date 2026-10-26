@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ "${EUID}" -ne 0 ]]; then
+  echo "Run as root." >&2
+  exit 1
+fi
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+id -u eventforge >/dev/null 2>&1 || useradd --system --create-home --home-dir /var/lib/eventforge --shell /usr/sbin/nologin eventforge
+install -d -o root -g eventforge -m 0750 /opt/eventforge/releases /etc/eventforge /var/lib/eventforge
+install -d -o root -g root -m 0755 /usr/local/lib/eventforge
+
+install -m 0644 "${repo_root}/ops/systemd/eventforge-api.service" /etc/systemd/system/eventforge-api.service
+install -m 0644 "${repo_root}/ops/systemd/eventforge-worker.service" /etc/systemd/system/eventforge-worker.service
+install -m 0644 "${repo_root}/ops/systemd/eventforge-backup.service" /etc/systemd/system/eventforge-backup.service
+install -m 0644 "${repo_root}/ops/systemd/eventforge-backup.timer" /etc/systemd/system/eventforge-backup.timer
+install -m 0750 "${repo_root}/ops/scripts/eventforge-backup" /usr/local/lib/eventforge/eventforge-backup
+install -m 0750 "${repo_root}/ops/scripts/eventforge-install-release" /usr/local/lib/eventforge/eventforge-install-release
+ln -sfn /usr/local/lib/eventforge/eventforge-install-release /usr/local/sbin/eventforge-install-release
+
+systemctl daemon-reload
+systemctl enable eventforge-api.service eventforge-worker.service eventforge-backup.timer
+echo "Create /etc/eventforge/{api,worker,backup,release}.env and password files before starting services."
+

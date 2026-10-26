@@ -1,0 +1,45 @@
+# Generated import configuration belongs here after OCI resource discovery.
+# Copy to imported_resources.tf, fill in all required arguments with discovered
+# values, import each resource as described in docs/imports.md, then retain
+# prevent_destroy. For instances, preserve current create_vnic_details values
+# and append the NSG IDs emitted by network.tf.
+
+variable "imported_api_instances" {
+  type = map(object({
+    availability_domain = string
+    shape               = string
+    display_name        = string
+    existing_nsg_ids    = list(string)
+    source_type         = string
+    source_id           = string
+  }))
+  default = {}
+}
+
+resource "oci_core_instance" "api" {
+  for_each            = var.imported_api_instances
+  availability_domain = each.value.availability_domain
+  compartment_id      = var.compartment_ocid
+  shape               = each.value.shape
+  display_name        = each.value.display_name
+
+  create_vnic_details {
+    subnet_id = var.app_subnet_ocid
+    nsg_ids   = distinct(concat(each.value.existing_nsg_ids, [oci_core_network_security_group.app.id]))
+  }
+
+  source_details {
+    source_type = each.value.source_type
+    source_id   = each.value.source_id
+  }
+
+  lifecycle {
+    prevent_destroy = true
+    ignore_changes  = [metadata, agent_config, availability_config]
+  }
+}
+
+# Also import and protect the VCN, subnets, MySQL system, and load balancer.
+# Use the OCI provider resource-discovery output as the authoritative shape,
+# adding lifecycle { prevent_destroy = true } to each imported resource.
+

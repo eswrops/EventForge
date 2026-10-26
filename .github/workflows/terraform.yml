@@ -1,0 +1,107 @@
+name: Terraform
+
+on:
+  pull_request:
+    paths:
+      - 'infra/**'
+      - '.github/workflows/terraform.yml'
+      - 'scripts/ci/**'
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Run a speculative plan or the protected production apply'
+        required: true
+        type: choice
+        options: [plan, apply]
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Format and validate (${{ matrix.root }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        root: [infra/bootstrap, infra/platform, infra/frontend]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+      - name: Check formatting
+        working-directory: ${{ matrix.root }}
+        run: terraform fmt -check -recursive
+      - name: Initialize without state
+        working-directory: ${{ matrix.root }}
+        run: terraform init -backend=false
+      - name: Validate configuration
+        working-directory: ${{ matrix.root }}
+        run: terraform validate
+
+  production:
+    if: github.event_name == 'workflow_dispatch'
+    needs: validate
+    runs-on: ubuntu-latest
+    environment: production
+    concurrency:
+      group: eventforge-production-terraform
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      id-token: write
+    strategy:
+      fail-fast: false
+      matrix:
+        root: [infra/platform, infra/frontend]
+    env:
+      OCI_AUTH: WorkloadIdentityFederation
+      OCI_REGION: ${{ vars.OCI_REGION }}
+      TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      TF_VAR_release_tag: ${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+      - name: Configure OCI workload federation
+        shell: bash
+        env:
+          OCI_WIF_CONFIG_JSON: ${{ secrets.OCI_WIF_CONFIG_JSON }}
+        run: scripts/ci/configure-oci-wif.sh
+      - name: Write protected root inputs
+        shell: bash
+        env:
+          TFVARS: ${{ matrix.root == 'infra/platform' && secrets.TF_VARS_PLATFORM || secrets.TF_VARS_FRONTEND }}
+        run: |
+          test -n "$TFVARS"
+          printf '%s' "$TFVARS" > "${{ matrix.root }}/terraform.auto.tfvars"
+      - name: Initialize OCI state backend
+        working-directory: ${{ matrix.root }}
+        env:
+          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+          OCI_OBJECT_STORAGE_NAMESPACE: ${{ vars.OCI_OBJECT_STORAGE_NAMESPACE }}
+        run: |
+          test -n "$TF_STATE_BUCKET" && test -n "$OCI_OBJECT_STORAGE_NAMESPACE"
+          cat > backend.hcl <<EOF
+          bucket    = "$TF_STATE_BUCKET"
+          namespace = "$OCI_OBJECT_STORAGE_NAMESPACE"
+          key       = "${{ matrix.root == 'infra/platform' && 'platform' || 'frontend' }}/terraform.tfstate"
+          region    = "${OCI_REGION}"
+          EOF
+          terraform init -input=false -backend-config=backend.hcl
+      - name: Create plan
+        working-directory: ${{ matrix.root }}
+        run: terraform plan -input=false -out=production.tfplan
+      - name: Enforce non-destructive plan
+        if: matrix.root == 'infra/platform'
+        working-directory: ${{ matrix.root }}
+        run: |
+          terraform show -json production.tfplan > production.json
+          ../../scripts/ci/assert-safe-plan.sh production.json
+      - name: Apply protected plan
+        if: inputs.action == 'apply'
+        working-directory: ${{ matrix.root }}
+        run: terraform apply -input=false production.tfplan
+

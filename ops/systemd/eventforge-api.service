@@ -1,0 +1,26 @@
+[Unit]
+Description=EventForge API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=eventforge
+Group=eventforge
+EnvironmentFile=/etc/eventforge/api.env
+WorkingDirectory=/var/lib/eventforge
+ExecStart=/opt/eventforge/current/eventforge-api
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+MemoryMax=256M
+TasksMax=128
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/eventforge
+
+[Install]
+WantedBy=multi-user.target
+

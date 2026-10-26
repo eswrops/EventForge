@@ -1,0 +1,6 @@
+# Copy to ignored backend.hcl after the first local bootstrap apply.
+bucket    = "eventforge-tfstate-prod"
+namespace = "replace-with-object-storage-namespace"
+key       = "bootstrap/terraform.tfstate"
+region    = "replace-with-region"
+

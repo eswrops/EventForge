@@ -1,0 +1,6 @@
+cloudflare_account_id = "replace-me"
+cloudflare_zone_id    = "replace-me"
+cloudflare_api_token  = "set-through-TF_VAR_cloudflare_api_token-instead"
+root_domain           = "example.com"
+release_tag           = "local-development"
+
