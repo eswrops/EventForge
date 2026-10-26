@@ -72,7 +72,13 @@ if grep -Fq "$valid_rpst" "$env_file"; then
   echo "RPST material must not be written to GITHUB_ENV." >&2
   exit 1
 fi
-[[ "$(stat -f '%Lp' "$temp_dir/oci-rpst.jwt")" == "600" ]]
+# GNU stat (Linux runners) uses -c; BSD stat (macOS) uses -f for file modes.
+if stat --version >/dev/null 2>&1; then
+  rpst_perms="$(stat -c '%a' "$temp_dir/oci-rpst.jwt")"
+else
+  rpst_perms="$(stat -f '%Lp' "$temp_dir/oci-rpst.jwt")"
+fi
+[[ "$rpst_perms" == "600" ]]
 
 expect_failure() {
   local name="$1"
