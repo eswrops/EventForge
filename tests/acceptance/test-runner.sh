@@ -14,3 +14,6 @@ jq -e '
 ' "$report" >/dev/null
 
 echo "acceptance runner report contract passed"
+
+# The M1B.1 bootstrap preflight must run read-only with no live sessions.
+"$repo_root/tests/acceptance/test-preflight.sh"

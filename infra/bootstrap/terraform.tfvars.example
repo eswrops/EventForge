@@ -9,6 +9,10 @@ instance_ocids = [
 notification_email = "ops@example.com"
 state_version_retention_days = 30
 # Customer-managed OCI Vault key for Terraform-state encryption at rest.
+# The key must already exist (it is not created by this root) in the same
+# region as the buckets, and the operator applying this root needs
+# permission to use it; bootstrap adds the required Object Storage service
+# policy automatically.
 state_bucket_kms_key_id = "ocid1.key.oc1..replace-me"
 
 # Create separate statements from the OCI identity-domain federation setup.

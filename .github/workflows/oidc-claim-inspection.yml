@@ -1,0 +1,28 @@
+name: OIDC claim inspection
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  inspect:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production-plan
+    concurrency:
+      group: eventforge-oidc-claim-inspection
+      cancel-in-progress: false
+    env:
+      EXPECTED_ENVIRONMENT: production-plan
+      EXPECTED_REF: refs/heads/main
+      EXPECTED_AUDIENCE: github-actions
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Inspect and validate OIDC claims
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          scripts/ci/inspect-oidc-claims.sh | tee "$GITHUB_STEP_SUMMARY"
