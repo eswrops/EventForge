@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "phase": "M1B.1 — Secure bootstrap preparation",
+  "phase": "M1B.1 \u2014 Secure bootstrap preparation",
   "generated_at": "2026-10-26T23:43:13Z",
   "git_commit": "recorded per check; preparation based on main 15e11867cb508ab76456539936888babaa6118e6",
   "m1b_baseline": {
@@ -10,30 +10,228 @@
   "terraform_version": "1.12.2",
   "environment": "github:eswrops/EventForge + OCI tenancy easwarendraece (ap-hyderabad-1), read-only operator session",
   "checks": [
-    { "id": "p0-m1b-evidence-reconciled", "description": "All docs/acceptance/m1b evidence read and reconciled with current main HEAD 15e1186; CI run 40418147090 verified SUCCESS at c38991f", "timestamp": "2026-10-26T23:43:13Z", "commit": "15e11867cb508ab76456539936888babaa6118e6", "status": "PASS", "evidence": "docs/acceptance/m1b/summary.md; gh run view 40418147090", "operator_action": null },
-    { "id": "p0-roots-inspected", "description": "Three Terraform roots inspected; platform declares no managed VCN/subnet/security-list/route-table resources; prevent_destroy present for instances and provided as skeletons for VCN/subnets/MySQL/LB", "timestamp": "2026-10-26T23:43:13Z", "commit": "15e11867cb508ab76456539936888babaa6118e6", "status": "PASS", "evidence": "docs/acceptance/m1b-bootstrap/import-safety.md; preflight checks shared-network-unmanaged/imported-protection", "operator_action": null },
-    { "id": "p0-inventory-mapping-comparison", "description": "Import mappings compared against captured live OCI inventory; all eight mappings one-to-one and current", "timestamp": "2026-10-26T23:43:13Z", "commit": "15e11867cb508ab76456539936888babaa6118e6", "status": "PASS", "evidence": "docs/acceptance/m1b-bootstrap/import-safety.md §1", "operator_action": null },
-    { "id": "p1-github-settings-defined", "description": "Operator-reviewable definitions for both environments, main branch protection, and Actions hardening written; nothing applied to GitHub", "timestamp": "2026-10-26T23:43:13Z", "commit": "15e11867cb508ab76456539936888babaa6118e6", "status": "PASS", "evidence": "docs/acceptance/m1b-bootstrap/github-security.md", "operator_action": "Apply steps A1–A5 of operator-checklist.md" },
-    { "id": "p1-github-settings-not-mutated", "description": "No GitHub security setting was changed during this preparation (live verification: environments absent, protection 404, permissions unchanged)", "timestamp": "2026-10-26T23:43:13Z", "commit": "15e11867cb508ab76456539936888babaa6118e6", "status": "PASS", "evidence": "preflight gh-* checks recorded in this report and scripts/acceptance/m1b-bootstrap-preflight.sh run log", "operator_action": null },
-    { "id": "p2-github-numeric-identity", "description": "Numeric REST repository ID 1434990962 and owner ID 237514587 retrieved; GraphQL node IDs recorded but never used; visibility public; default branch main", "timestamp": "2026-10-26T23:43:13Z", "commit": "15e11867cb508ab76456539936888babaa6118e6", "status": "PASS", "evidence": "docs/acceptance/m1b-bootstrap/github-security.md §1", "operator_action": null },
-    { "id": "p2-oidc-claim-inspection-added", "description": "Protected claim-inspection procedure (script + workflow + 12 fixture cases) validates issuer, audience, subject, repository, numeric repository/owner IDs, ref, ref_type, environment, job_workflow_ref, iat/exp exactly and fails closed; sanitized output only", "timestamp": "2026-10-26T23:43:13Z", "commit": "15e11867cb508ab76456539936888babaa6118e6", "status": "PASS", "evidence": "scripts/ci/inspect-oidc-claims.sh; tests/ci/test-oidc-claim-inspection.sh; .github/workflows/oidc-claim-inspection.yml", "operator_action": "Dispatch the inspection workflow after step A1 (checklist A7)" },
-    { "id": "p2-subject-claim-templates", "description": "Expected immutable OIDC subject templates defined for both protected environments", "timestamp": "2026-10-26T23:43:13Z", "commit": "15e11867cb508ab76456539936888babaa6118e6", "status": "PASS", "evidence": "docs/acceptance/m1b-bootstrap/github-security.md §2; federation.md §A", "operator_action": null },
-    { "id": "p3-bootstrap-scope-verified", "description": "Offline plan (placeholders, no provider API calls, no state) confirms exactly 10 creates / 0 changes / 0 destroys: 2 buckets, 1 lifecycle policy, 1 dynamic group, 4 policies (incl. new KMS policy), 1 topic + 1 subscription; no compute/VCN/MySQL/LB/ingress resources", "timestamp": "2026-10-26T23:43:13Z", "commit": "15e11867cb508ab76456539936888babaa6118e6", "status": "PASS", "evidence": "docs/acceptance/m1b-bootstrap/oci-bootstrap.md §1; scripts/acceptance/m1b-bootstrap-preflight.sh bootstrap-scope-allowlist", "operator_action": "Steps B3–B4 (plan review, apply) of operator-checklist.md" },
-    { "id": "p3-existing-resources-protected", "description": "Bootstrap cannot recreate instances, MySQL, VCN/subnets, or load balancer (allowlist-enforced); no public ingress anywhere in the root", "timestamp": "2026-10-26T23:43:13Z", "commit": "15e11867cb508ab76456539936888babaa6118e6", "status": "PASS", "evidence": "oci-bootstrap.md §1; preflight bootstrap-scope-allowlist/ingress-disabled", "operator_action": null },
-    { "id": "p3-vault-dependency", "description": "Vault rust-api-secrets (tenancy root, ACTIVE) holds rust-api-secret-key (AES, SOFTWARE, ENABLED); key exists in compatible region; dedicated state CMK recommended; Object Storage→KMS service policy added to the root", "timestamp": "2026-10-26T23:43:13Z", "commit": "15e11867cb508ab76456539936888babaa6118e6", "status": "PASS", "evidence": "docs/acceptance/m1b-bootstrap/oci-bootstrap.md §2; infra/bootstrap/main.tf oci_identity_policy.objectstorage_kms", "operator_action": "Step B1: create dedicated CMK or record reuse decision" },
-    { "id": "p3-always-free-estimate", "description": "Estimated Always Free consumption documented (2 buckets vs 20 GiB allowance, ≤1 of 20 free KEKs, 1 topic/subscription, no compute)", "timestamp": "2026-10-26T23:43:13Z", "commit": "15e11867cb508ab76456539936888babaa6118e6", "status": "PASS", "evidence": "docs/acceptance/m1b-bootstrap/oci-bootstrap.md §3", "operator_action": null },
-    { "id": "p3-live-bootstrap-plan", "description": "A plan with real operator inputs against the live tenancy was not run (inputs are git-ignored operator data; offline plan used instead)", "timestamp": "2026-10-26T23:43:13Z", "commit": "15e11867cb508ab76456539936888babaa6118e6", "status": "BLOCKED", "evidence": "oci-bootstrap.md §5", "operator_action": "Step B3 with real tfvars before apply" },
-    { "id": "p4-federation-identities-specified", "description": "Two distinct workload identities fully specified: trust requirements, expected claims, OAuth client requirements, protected config fields, expiry/rotation, permitted principals; plan identity denied state overwrite via target.object.name lock-only pattern; no shared secrets", "timestamp": "2026-10-26T23:43:13Z", "commit": "15e11867cb508ab76456539936888babaa6118e6", "status": "PASS", "evidence": "docs/acceptance/m1b-bootstrap/federation.md", "operator_action": "Steps C1–C3" },
-    { "id": "p4-federation-live", "description": "No token exchange or signed API request has been executed; federation remains unproven by design of this phase", "timestamp": "2026-10-26T23:43:13Z", "commit": "15e11867cb508ab76456539936888babaa6118e6", "status": "BLOCKED", "evidence": "docs/acceptance/m1b/federation-validation.json", "operator_action": "Checklist C1–C3 and M1B live runbook" },
-    { "id": "p5-import-mapping-audit", "description": "Every imported OCID verified one-to-one against live resources; prevent_destroy protections audited (instances complete; VCN/subnets/MySQL/LB provided as commented skeletons); shared network components classified read-only and enforced by preflight", "timestamp": "2026-10-26T23:43:13Z", "commit": "15e11867cb508ab76456539936888babaa6118e6", "status": "PASS", "evidence": "docs/acceptance/m1b-bootstrap/import-safety.md", "operator_action": null },
-    { "id": "p5-state-procedures-prepared", "description": "State init, backup, native-backend auth, disposable lock validation, encryption validation, version recovery, refresh-only reconciliation, and rollback procedures written; all probes restricted to disposable keys", "timestamp": "2026-10-26T23:43:13Z", "commit": "15e11867cb508ab76456539936888babaa6118e6", "status": "PASS", "evidence": "docs/acceptance/m1b-bootstrap/state-recovery.md", "operator_action": null },
-    { "id": "p5-imports-not-run", "description": "No terraform import executed (hard constraint); imports stay blocked on backend + operator approval", "timestamp": "2026-10-26T23:43:13Z", "commit": "15e11867cb508ab76456539936888babaa6118e6", "status": "BLOCKED", "evidence": "import-safety.md §4", "operator_action": "Checklist D1–D2 after Phase B" },
-    { "id": "p6-preflight-entrypoint", "description": "scripts/acceptance/m1b-bootstrap-preflight.sh created: read-only by default, 19 checks across GitHub identity/environments/protection/Actions, Terraform version/validate, operator inputs, OCI session/region/compartment/inventory/Vault, bootstrap scope, ingress, shared network, import protection, tracked secrets; validated live: 13 PASS / 0 FAIL / 6 BLOCKED", "timestamp": "2026-10-26T23:43:13Z", "commit": "15e11867cb508ab76456539936888babaa6118e6", "status": "PASS", "evidence": "scripts/acceptance/m1b-bootstrap-preflight.sh; tests/acceptance/test-preflight.sh (contract test in CI)", "operator_action": null },
-    { "id": "p6-execution-checklist", "description": "Every mutating step documented with exact command, target account/compartment, expected resources, required identity, expected effects, rollback, and approval line", "timestamp": "2026-10-26T23:43:13Z", "commit": "15e11867cb508ab76456539936888babaa6118e6", "status": "PASS", "evidence": "docs/acceptance/m1b-bootstrap/operator-checklist.md", "operator_action": "Execute in order with recorded approvals" },
-    { "id": "p7-no-secret-material", "description": "Evidence contains no OAuth secrets, JWTs, RPSTs, private keys, state contents, DB credentials, or plan payloads; OCIDs/IPs only as captured in M1B", "timestamp": "2026-10-26T23:43:13Z", "commit": "15e11867cb508ab76456539936888babaa6118e6", "status": "PASS", "evidence": "Phase 8 secret scan + tracked-file check; manual review of all new files", "operator_action": null },
-    { "id": "p8-dtolnay-pin-fixed", "description": "dtolnay/rust-toolchain was pinned to a SHA that exists only in actions/setup-go (frontend.yml/release.yml would fail at dispatch); repinned to stable branch SHA b725eda525362e7cf34af9a7243cac1e3f01a7ec verified via REST", "timestamp": "2026-10-26T23:43:13Z", "commit": "15e11867cb508ab76456539936888babaa6118e6", "status": "PASS", "evidence": "gh api repos/dtolnay/rust-toolchain/commits/40f1582... -> 422; commits/stable -> b725eda...", "operator_action": null },
-    { "id": "p8-base64-padding-fixed", "description": "JWT/RPST payload decode now restores base64url padding before base64 --decode; BSD base64 silently truncates unpadded payloads (latent bug in configure-oci-wif.sh also fixed)", "timestamp": "2026-10-26T23:43:13Z", "commit": "15e11867cb508ab76456539936888babaa6118e6", "status": "PASS", "evidence": "scripts/ci/configure-oci-wif.sh, scripts/ci/inspect-oidc-claims.sh; all fixture tests pass on darwin_arm64", "operator_action": null },
-    { "id": "p8-validation-suite", "description": "Terraform fmt+validate (1.12.2, all roots), tests/ci/run.sh (WIF, safe-plan, OIDC inspection, harness 12/12, runner + preflight contracts), ShellCheck, actionlint, bash -n, secret scan, git diff --check all pass locally", "timestamp": "2026-10-26T23:43:13Z", "commit": "15e11867cb508ab76456539936888babaa6118e6", "status": "PASS", "evidence": "PR CI run (recorded after merge); local logs retained", "operator_action": null }
+    {
+      "id": "p0-m1b-evidence-reconciled",
+      "description": "All docs/acceptance/m1b evidence read and reconciled with current main HEAD 15e1186; CI run 40418147090 verified SUCCESS at c38991f",
+      "timestamp": "2026-10-26T23:43:13Z",
+      "commit": "15e11867cb508ab76456539936888babaa6118e6",
+      "status": "PASS",
+      "evidence": "docs/acceptance/m1b/summary.md; gh run view 40418147090",
+      "operator_action": null
+    },
+    {
+      "id": "p0-roots-inspected",
+      "description": "Three Terraform roots inspected; platform declares no managed VCN/subnet/security-list/route-table resources; prevent_destroy present for instances and provided as skeletons for VCN/subnets/MySQL/LB",
+      "timestamp": "2026-10-26T23:43:13Z",
+      "commit": "15e11867cb508ab76456539936888babaa6118e6",
+      "status": "PASS",
+      "evidence": "docs/acceptance/m1b-bootstrap/import-safety.md; preflight checks shared-network-unmanaged/imported-protection",
+      "operator_action": null
+    },
+    {
+      "id": "p0-inventory-mapping-comparison",
+      "description": "Import mappings compared against captured live OCI inventory; all eight mappings one-to-one and current",
+      "timestamp": "2026-10-26T23:43:13Z",
+      "commit": "15e11867cb508ab76456539936888babaa6118e6",
+      "status": "PASS",
+      "evidence": "docs/acceptance/m1b-bootstrap/import-safety.md \u00a71",
+      "operator_action": null
+    },
+    {
+      "id": "p1-github-settings-defined",
+      "description": "Operator-reviewable definitions for both environments, main branch protection, and Actions hardening written; nothing applied to GitHub",
+      "timestamp": "2026-10-26T23:43:13Z",
+      "commit": "15e11867cb508ab76456539936888babaa6118e6",
+      "status": "PASS",
+      "evidence": "docs/acceptance/m1b-bootstrap/github-security.md",
+      "operator_action": "Apply steps A1\u2013A5 of operator-checklist.md"
+    },
+    {
+      "id": "p1-github-settings-not-mutated",
+      "description": "No GitHub security setting was changed during this preparation (live verification: environments absent, protection 404, permissions unchanged)",
+      "timestamp": "2026-10-26T23:43:13Z",
+      "commit": "15e11867cb508ab76456539936888babaa6118e6",
+      "status": "PASS",
+      "evidence": "preflight gh-* checks recorded in this report and scripts/acceptance/m1b-bootstrap-preflight.sh run log",
+      "operator_action": null
+    },
+    {
+      "id": "p2-github-numeric-identity",
+      "description": "Numeric REST repository ID 1434990962 and owner ID 237514587 retrieved; GraphQL node IDs recorded but never used; visibility public; default branch main",
+      "timestamp": "2026-10-26T23:43:13Z",
+      "commit": "15e11867cb508ab76456539936888babaa6118e6",
+      "status": "PASS",
+      "evidence": "docs/acceptance/m1b-bootstrap/github-security.md \u00a71",
+      "operator_action": null
+    },
+    {
+      "id": "p2-oidc-claim-inspection-added",
+      "description": "Protected claim-inspection procedure (script + workflow + 12 fixture cases) validates issuer, audience, subject, repository, numeric repository/owner IDs, ref, ref_type, environment, job_workflow_ref, iat/exp exactly and fails closed; sanitized output only",
+      "timestamp": "2026-10-26T23:43:13Z",
+      "commit": "15e11867cb508ab76456539936888babaa6118e6",
+      "status": "PASS",
+      "evidence": "scripts/ci/inspect-oidc-claims.sh; tests/ci/test-oidc-claim-inspection.sh; .github/workflows/oidc-claim-inspection.yml",
+      "operator_action": "Dispatch the inspection workflow after step A1 (checklist A7)"
+    },
+    {
+      "id": "p2-subject-claim-templates",
+      "description": "Expected immutable OIDC subject templates defined for both protected environments",
+      "timestamp": "2026-10-26T23:43:13Z",
+      "commit": "15e11867cb508ab76456539936888babaa6118e6",
+      "status": "PASS",
+      "evidence": "docs/acceptance/m1b-bootstrap/github-security.md \u00a72; federation.md \u00a7A",
+      "operator_action": null
+    },
+    {
+      "id": "p3-bootstrap-scope-verified",
+      "description": "Offline plan (placeholders, no provider API calls, no state) confirms exactly 10 creates / 0 changes / 0 destroys: 2 buckets, 1 lifecycle policy, 1 dynamic group, 4 policies (incl. new KMS policy), 1 topic + 1 subscription; no compute/VCN/MySQL/LB/ingress resources",
+      "timestamp": "2026-10-26T23:43:13Z",
+      "commit": "15e11867cb508ab76456539936888babaa6118e6",
+      "status": "PASS",
+      "evidence": "docs/acceptance/m1b-bootstrap/oci-bootstrap.md \u00a71; scripts/acceptance/m1b-bootstrap-preflight.sh bootstrap-scope-allowlist",
+      "operator_action": "Steps B3\u2013B4 (plan review, apply) of operator-checklist.md"
+    },
+    {
+      "id": "p3-existing-resources-protected",
+      "description": "Bootstrap cannot recreate instances, MySQL, VCN/subnets, or load balancer (allowlist-enforced); no public ingress anywhere in the root",
+      "timestamp": "2026-10-26T23:43:13Z",
+      "commit": "15e11867cb508ab76456539936888babaa6118e6",
+      "status": "PASS",
+      "evidence": "oci-bootstrap.md \u00a71; preflight bootstrap-scope-allowlist/ingress-disabled",
+      "operator_action": null
+    },
+    {
+      "id": "p3-vault-dependency",
+      "description": "Vault rust-api-secrets (tenancy root, ACTIVE) holds rust-api-secret-key (AES, SOFTWARE, ENABLED); key exists in compatible region; dedicated state CMK recommended; Object Storage\u2192KMS service policy added to the root",
+      "timestamp": "2026-10-26T23:43:13Z",
+      "commit": "15e11867cb508ab76456539936888babaa6118e6",
+      "status": "PASS",
+      "evidence": "docs/acceptance/m1b-bootstrap/oci-bootstrap.md \u00a72; infra/bootstrap/main.tf oci_identity_policy.objectstorage_kms",
+      "operator_action": "Step B1: create dedicated CMK or record reuse decision"
+    },
+    {
+      "id": "p3-always-free-estimate",
+      "description": "Estimated Always Free consumption documented (2 buckets vs 20 GiB allowance, \u22641 of 20 free KEKs, 1 topic/subscription, no compute)",
+      "timestamp": "2026-10-26T23:43:13Z",
+      "commit": "15e11867cb508ab76456539936888babaa6118e6",
+      "status": "PASS",
+      "evidence": "docs/acceptance/m1b-bootstrap/oci-bootstrap.md \u00a73",
+      "operator_action": null
+    },
+    {
+      "id": "p3-live-bootstrap-plan",
+      "description": "A plan with real operator inputs against the live tenancy was not run (inputs are git-ignored operator data; offline plan used instead)",
+      "timestamp": "2026-10-26T23:43:13Z",
+      "commit": "15e11867cb508ab76456539936888babaa6118e6",
+      "status": "BLOCKED",
+      "evidence": "oci-bootstrap.md \u00a75",
+      "operator_action": "Step B3 with real tfvars before apply"
+    },
+    {
+      "id": "p4-federation-identities-specified",
+      "description": "Two distinct workload identities fully specified: trust requirements, expected claims, OAuth client requirements, protected config fields, expiry/rotation, permitted principals; plan identity denied state overwrite via target.object.name lock-only pattern; no shared secrets",
+      "timestamp": "2026-10-26T23:43:13Z",
+      "commit": "15e11867cb508ab76456539936888babaa6118e6",
+      "status": "PASS",
+      "evidence": "docs/acceptance/m1b-bootstrap/federation.md",
+      "operator_action": "Steps C1\u2013C3"
+    },
+    {
+      "id": "p4-federation-live",
+      "description": "No token exchange or signed API request has been executed; federation remains unproven by design of this phase",
+      "timestamp": "2026-10-26T23:43:13Z",
+      "commit": "15e11867cb508ab76456539936888babaa6118e6",
+      "status": "BLOCKED",
+      "evidence": "docs/acceptance/m1b/federation-validation.json",
+      "operator_action": "Checklist C1\u2013C3 and M1B live runbook"
+    },
+    {
+      "id": "p5-import-mapping-audit",
+      "description": "Every imported OCID verified one-to-one against live resources; prevent_destroy protections audited (instances complete; VCN/subnets/MySQL/LB provided as commented skeletons); shared network components classified read-only and enforced by preflight",
+      "timestamp": "2026-10-26T23:43:13Z",
+      "commit": "15e11867cb508ab76456539936888babaa6118e6",
+      "status": "PASS",
+      "evidence": "docs/acceptance/m1b-bootstrap/import-safety.md",
+      "operator_action": null
+    },
+    {
+      "id": "p5-state-procedures-prepared",
+      "description": "State init, backup, native-backend auth, disposable lock validation, encryption validation, version recovery, refresh-only reconciliation, and rollback procedures written; all probes restricted to disposable keys",
+      "timestamp": "2026-10-26T23:43:13Z",
+      "commit": "15e11867cb508ab76456539936888babaa6118e6",
+      "status": "PASS",
+      "evidence": "docs/acceptance/m1b-bootstrap/state-recovery.md",
+      "operator_action": null
+    },
+    {
+      "id": "p5-imports-not-run",
+      "description": "No terraform import executed (hard constraint); imports stay blocked on backend + operator approval",
+      "timestamp": "2026-10-26T23:43:13Z",
+      "commit": "15e11867cb508ab76456539936888babaa6118e6",
+      "status": "BLOCKED",
+      "evidence": "import-safety.md \u00a74",
+      "operator_action": "Checklist D1\u2013D2 after Phase B"
+    },
+    {
+      "id": "p6-preflight-entrypoint",
+      "description": "scripts/acceptance/m1b-bootstrap-preflight.sh created: read-only by default, 19 checks across GitHub identity/environments/protection/Actions, Terraform version/validate, operator inputs, OCI session/region/compartment/inventory/Vault, bootstrap scope, ingress, shared network, import protection, tracked secrets; validated live: 13 PASS / 0 FAIL / 6 BLOCKED",
+      "timestamp": "2026-10-26T23:43:13Z",
+      "commit": "15e11867cb508ab76456539936888babaa6118e6",
+      "status": "PASS",
+      "evidence": "scripts/acceptance/m1b-bootstrap-preflight.sh; tests/acceptance/test-preflight.sh (contract test in CI)",
+      "operator_action": null
+    },
+    {
+      "id": "p6-execution-checklist",
+      "description": "Every mutating step documented with exact command, target account/compartment, expected resources, required identity, expected effects, rollback, and approval line",
+      "timestamp": "2026-10-26T23:43:13Z",
+      "commit": "15e11867cb508ab76456539936888babaa6118e6",
+      "status": "PASS",
+      "evidence": "docs/acceptance/m1b-bootstrap/operator-checklist.md",
+      "operator_action": "Execute in order with recorded approvals"
+    },
+    {
+      "id": "p7-no-secret-material",
+      "description": "Evidence contains no OAuth secrets, JWTs, RPSTs, private keys, state contents, DB credentials, or plan payloads; OCIDs/IPs only as captured in M1B",
+      "timestamp": "2026-10-26T23:43:13Z",
+      "commit": "15e11867cb508ab76456539936888babaa6118e6",
+      "status": "PASS",
+      "evidence": "Phase 8 secret scan + tracked-file check; manual review of all new files",
+      "operator_action": null
+    },
+    {
+      "id": "p8-dtolnay-pin-fixed",
+      "description": "dtolnay/rust-toolchain was pinned to a SHA that exists only in actions/setup-go (frontend.yml/release.yml would fail at dispatch); repinned to stable branch SHA b725eda525362e7cf34af9a7243cac1e3f01a7ec verified via REST",
+      "timestamp": "2026-10-26T23:43:13Z",
+      "commit": "15e11867cb508ab76456539936888babaa6118e6",
+      "status": "PASS",
+      "evidence": "gh api repos/dtolnay/rust-toolchain/commits/40f1582... -> 422; commits/stable -> b725eda...",
+      "operator_action": null
+    },
+    {
+      "id": "p8-base64-padding-fixed",
+      "description": "JWT/RPST payload decode now restores base64url padding before base64 --decode; BSD base64 silently truncates unpadded payloads (latent bug in configure-oci-wif.sh also fixed)",
+      "timestamp": "2026-10-26T23:43:13Z",
+      "commit": "15e11867cb508ab76456539936888babaa6118e6",
+      "status": "PASS",
+      "evidence": "scripts/ci/configure-oci-wif.sh, scripts/ci/inspect-oidc-claims.sh; all fixture tests pass on darwin_arm64",
+      "operator_action": null
+    },
+    {
+      "id": "p8-validation-suite",
+      "description": "Terraform fmt+validate (1.12.2, all roots), tests/ci/run.sh (WIF, safe-plan, OIDC inspection, harness 12/12, runner + preflight contracts), ShellCheck, actionlint, bash -n, secret scan, git diff --check all pass locally",
+      "timestamp": "2026-10-26T23:43:13Z",
+      "commit": "15e11867cb508ab76456539936888babaa6118e6",
+      "status": "PASS",
+      "evidence": "PR CI run https://github.com/eswrops/EventForge/actions/runs/40422350504 (SUCCESS); local logs retained",
+      "operator_action": null
+    }
   ],
-  "summary": { "pass": 20, "fail": 0, "not_run": 0, "blocked": 3 }
+  "summary": {
+    "pass": 20,
+    "fail": 0,
+    "not_run": 0,
+    "blocked": 3
+  },
+  "ci_run": "https://github.com/eswrops/EventForge/actions/runs/40422350504"
 }
