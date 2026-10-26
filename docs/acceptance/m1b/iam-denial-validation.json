@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "phase": "M1B Phase 6 — Security isolation tests",
+  "generated_at": "2026-10-26T23:15:20Z",
+  "git_commit": "c38991ffd0c5964233ee39aec490d8647edb6e1b",
+  "terraform_version": "1.12.2",
+  "environment": "OCI tenancy easwarendraece (ap-hyderabad-1), operator session; github:eswrops/EventForge",
+  "rule": "An authorization-denied test must fail the acceptance gate if the prohibited operation unexpectedly succeeds. No destructive permission tests were performed against production objects or state, and no IAM policy was relaxed or created to make tests pass.",
+  "checks": [
+    { "id": "plan-identity-no-mutate", "description": "Plan identity cannot mutate infrastructure (e.g., denied instance update)", "status": "BLOCKED", "detail": "No plan identity exists until federation + bootstrap policies are operator-provisioned." },
+    { "id": "plan-identity-no-state-overwrite", "description": "Plan identity cannot overwrite production state", "status": "BLOCKED", "detail": "Requires the plan-identity policy and production state objects to exist." },
+    { "id": "apply-identity-scope", "description": "Apply identity can access only authorized resources", "status": "BLOCKED", "detail": "Apply dynamic group + policy are declared in infra/bootstrap but not yet created (live check: dynamic-group list is empty)." },
+    { "id": "vm-principal-backup-only", "description": "VM instance principals can access only permitted backup objects", "status": "BLOCKED", "detail": "Backup bucket does not exist yet (no buckets in tenancy); the instance-principal deny/allow probes need it. VM OCIDs for the dynamic group matching rule were captured (see import-reconciliation.json)." },
+    { "id": "vm-principal-no-state", "description": "VM instance principals cannot access Terraform state", "status": "BLOCKED", "detail": "State bucket does not exist yet; scripts/ci/verify-oci-backend-denied.sh is the committed probe." },
+    { "id": "cloudflare-token-readonly", "description": "Cloudflare read-only token cannot change zone settings", "status": "BLOCKED", "detail": "No Cloudflare tokens are configured in GitHub (secrets list empty) and none were provided in the operator session; the read-only token must be created and stored as CLOUDFLARE_API_TOKEN in production-plan before the test." },
+    { "id": "ingress-defaults-disabled", "description": "Terraform ingress defaults remain disabled", "status": "PASS", "detail": "enable_api_ingress defaults to false (infra/platform/variables.tf) and gates the certificate, listener, backend set, DNS record, and cache rule via count = var.enable_api_ingress ? 1 : 0 (load_balancer.tf, cloudflare.tf); harness check 'ingress-disabled' PASS. Live LB has zero listeners and zero backend sets (verified via API), consistent with ingress never having been enabled." },
+    { "id": "security-lists-not-broadened", "description": "Existing security lists are not unintentionally broadened", "status": "PASS", "detail": "The platform root reads subnet/security-list identities as input variables and creates only new NSGs + NSG rules; it declares no oci_core_security_list resource (grep-verified). Live rules captured: LB subnet 0.0.0.0/0 -> 80,443; DB subnet 3306,1522 from 10.0.2.0/24 only; app subnet 22 from operator /32 only. No public 8080/3306 exposure exists, and the safe-plan policy rejects any plan creating it." }
+  ],
+  "summary": { "pass": 2, "fail": 0, "not_run": 0, "blocked": 6 }
+}

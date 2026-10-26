@@ -1,0 +1,78 @@
+{
+  "schema_version": 1,
+  "phase": "M1B Phase 1 — Baseline and CI",
+  "generated_at": "2026-10-26T23:15:20Z",
+  "git_commit": "c38991ffd0c5964233ee39aec490d8647edb6e1b",
+  "git_branch_history": {
+    "baseline_commit": "8e6e371 (first commit, M1A working tree basis)",
+    "validated_commit": "c38991ffd0c5964233ee39aec490d8647edb6e1b",
+    "merged_to_main": "ffb88f979b4bc7517f85a1d2331675b7d4a448ef via PR #1"
+  },
+  "terraform_version": "1.12.2",
+  "environment": "github:eswrops/EventForge, ubuntu-latest runners",
+  "pull_request": "https://github.com/eswrops/EventForge/pull/1",
+  "workflow_run": {
+    "id": 40418147090,
+    "name": "Terraform",
+    "url": "https://github.com/eswrops/EventForge/actions/runs/40418147090",
+    "conclusion": "success",
+    "sha": "c38991ffd0c5964233ee39aec490d8647edb6e1b"
+  },
+  "earlier_failed_runs": [
+    {
+      "id": 40417204373,
+      "cause": "tests/ci/test-configure-oci-wif.sh used BSD stat -f '%Lp', unsupported by GNU stat on ubuntu",
+      "resolution": "commit 7c2cce8 — detect GNU vs BSD stat"
+    },
+    {
+      "id": 40417779621,
+      "cause": "scripts/acceptance/run.sh required ripgrep, not preinstalled on ubuntu runners",
+      "resolution": "commit c38991f — replace rg with grep -E and a two-step action-pin check"
+    }
+  ],
+  "checks": [
+    {
+      "id": "terraform-fmt-validate-actions",
+      "description": "terraform fmt -check -recursive and terraform validate for infra/bootstrap, infra/platform, infra/frontend under pinned Terraform 1.12.2 in GitHub Actions",
+      "status": "PASS",
+      "detail": "All three matrix jobs SUCCESS in run 40418147090."
+    },
+    {
+      "id": "terraform-version-consistency",
+      "description": "Terraform 1.12.2 used consistently",
+      "status": "PASS",
+      "detail": "All Terraform workflows pin terraform_version: 1.12.2; all roots require >= 1.12.0, < 2.0.0; docs/bootstrap.md pins 1.12.2; local validation was run with a checksum-verified 1.12.2 binary (sha256 1ca02f336ff4f993d6441806d38a0bcc0bbca0e3c877b84c9c2dc80cfcd0dc8b)."
+    },
+    {
+      "id": "provider-lockfiles",
+      "description": "Provider lockfiles and dependency checksums verified",
+      "status": "PASS",
+      "detail": "terraform init -backend=false succeeded for all three roots on linux_amd64 in Actions, which validates the committed lockfile checksums for the runner platform; local offline validation used the same lockfiles on darwin_arm64."
+    },
+    {
+      "id": "ci-script-checks",
+      "description": "Shell fixtures (WIF negative tests, safe-plan allow/deny fixtures), policy JSON validity, ShellCheck, and actionlint in GitHub Actions",
+      "status": "PASS",
+      "detail": "Job 'CI script and workflow checks' SUCCESS in run 40418147090."
+    },
+    {
+      "id": "offline-acceptance-harness",
+      "description": "Full offline acceptance harness (scripts/acceptance/run.sh)",
+      "status": "PASS",
+      "detail": "PASS=12 FAIL=0 NOT_RUN=0 locally with Terraform 1.12.2; tracked copy in docs/acceptance/m1b/offline-harness-report.json."
+    },
+    {
+      "id": "tracked-secret-material",
+      "description": "No tracked credentials, state, plan files, or secret patterns in the pushed tree",
+      "status": "PASS",
+      "detail": "Harness check plus a manual scan of the staged diff before push; GitHub secret scanning and push protection are also enabled on the repository."
+    },
+    {
+      "id": "no-false-pass",
+      "description": "No false PASS results for skipped checks",
+      "status": "PASS",
+      "detail": "The harness reports NOT_RUN (never PASS) when terraform, shellcheck, or actionlint are unavailable; on Actions runners terraform fmt/validate ran in dedicated jobs and actionlint in its own step, so no required check was silently skipped."
+    }
+  ],
+  "summary": { "pass": 7, "fail": 0, "not_run": 0, "blocked": 0 }
+}

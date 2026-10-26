@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "phase": "M1B Phase 3 — Federation verification",
+  "generated_at": "2026-10-26T23:15:20Z",
+  "git_commit": "c38991ffd0c5964233ee39aec490d8647edb6e1b",
+  "terraform_version": "1.12.2",
+  "environment": "github:eswrops/EventForge + OCI tenancy easwarendraece (ap-hyderabad-1)",
+  "execution_rule": "Federation tests may run only from the explicitly authorized workflow (OCI backend validation / Production Terraform plan on main, production-plan environment).",
+  "blocking_conditions": [
+    "No GitHub environments exist (production-plan, production) — no protected workflow context can be entered.",
+    "No OCI_WIF_CONFIG_JSON secret exists at repository or environment level.",
+    "No OCI identity-domain token-exchange OAuth client, dynamic group, or GitHub OIDC IAM policy exists (verified live: dynamic-group list empty; tenancy-root policies contain only 'Tenant Admin Policy').",
+    "Per the hard safety rules, no automatic OCI bootstrap was performed and no IAM policy was created to unblock testing."
+  ],
+  "checks": [
+    { "id": "positive-jwt-obtained", "description": "Obtain GitHub-issued OIDC JWT from authorized workflow", "status": "BLOCKED", "detail": "Requires the production-plan environment to exist and be protected first." },
+    { "id": "positive-jwt-claims", "description": "Verify expected issuer, audience, repository, environment subject, expiry", "status": "BLOCKED", "detail": "Claim verification is implemented and fixture-tested in scripts/ci/configure-oci-wif.sh (tests/ci/test-configure-oci-wif.sh, PASS in CI run 40418147090); live token capture still required." },
+    { "id": "positive-rpst-exchange", "description": "Exchange JWT for OCI RPST", "status": "BLOCKED", "detail": "Requires OCI identity-domain OAuth client (operator-created) referenced by OCI_WIF_CONFIG_JSON." },
+    { "id": "positive-resource-principal-env", "description": "Verify ResourcePrincipal environment configuration", "status": "BLOCKED", "detail": "configure-oci-wif.sh exports OCI_AUTH=ResourcePrincipal, OCI_RESOURCE_PRINCIPAL_VERSION=2.2, RPST and private-PEM paths (0600); fixture-verified, not live-verified." },
+    { "id": "positive-rpst-expiry-and-key", "description": "Verify RPST expiration and signing-key association", "status": "BLOCKED", "detail": "Ephemeral one-run RSA keypair is generated per run and the public half is submitted with the exchange; fixture-verified only." },
+    { "id": "positive-oci-read", "description": "Execute a permitted OCI read with the federated identity", "status": "BLOCKED", "detail": "Depends on RPST plus plan-identity IAM policy." },
+    { "id": "positive-credential-expiry", "description": "Verify credentials expire and fail closed", "status": "BLOCKED", "detail": "token_exchange_rpst_exp is bounded 1–720 minutes and the helper refuses expired RPSTs; live expiry observation still required." },
+    { "id": "negative-wrong-repository", "description": "Wrong repository subject is rejected", "status": "BLOCKED", "detail": "Requires live trust configured in OCI to observe the real denial path. The claim-check path is fixture-covered (repository 'other/repo' fixture fails)." },
+    { "id": "negative-wrong-environment", "description": "Wrong GitHub environment subject is rejected", "status": "BLOCKED", "detail": "Fixture-covered ('environment: production' against production-plan config); live test requires both configured trusts." },
+    { "id": "negative-wrong-audience", "description": "Wrong audience is rejected", "status": "BLOCKED", "detail": "Fixture-covered at the claim-check level; live OCI-side rejection requires the configured trust." },
+    { "id": "negative-expired-token", "description": "Expired JWT is rejected", "status": "BLOCKED", "detail": "Fixture-covered (exp in past fails claim check); live test optional once federation exists." },
+    { "id": "negative-missing-claims", "description": "Missing claims are rejected", "status": "BLOCKED", "detail": "Fixture-covered ('{}' config and missing-field fixtures fail)." },
+    { "id": "negative-inadequate-iam", "description": "Inadequate IAM permissions fail closed", "status": "BLOCKED", "detail": "Covered in Phase 6 (iam-denial-validation.json) once the plan identity exists." }
+  ],
+  "sanitization": "No JWT, RPST, OAuth client secret, or private key material was captured, logged, or committed by this acceptance run. Live evidence must record only exit status, expiry window, and key-file permissions per docs/acceptance/live-validation-runbook.md step 4.",
+  "summary": { "pass": 0, "fail": 0, "not_run": 0, "blocked": 13 }
+}
