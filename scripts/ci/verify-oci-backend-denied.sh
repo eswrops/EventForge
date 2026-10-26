@@ -31,7 +31,7 @@ if terraform -chdir="$work_dir" init -input=false -backend-config=backend.hcl > 
   exit 1
 fi
 
-if ! rg -qi 'denied|not authorized|forbidden|unauthorized' "$work_dir/init.log"; then
+if ! grep -qiE 'denied|not authorized|forbidden|unauthorized' "$work_dir/init.log"; then
   echo "Backend initialization failed for a reason other than an authorization denial." >&2
   sed -n '1,120p' "$work_dir/init.log" >&2
   exit 1
