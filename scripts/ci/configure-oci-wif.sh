@@ -57,8 +57,11 @@ curl --fail --silent --show-error \
 
 # Protected workflow jobs use GitHub's environment subject format exactly.
 # This rejects branch, tag, pull-request, other-repository, wrong-audience and
-# expired tokens before they reach the exchange endpoint.
-jwt_payload="$(cut -d. -f2 "$token_path" | tr '_-' '/+' | base64 --decode 2>/dev/null || true)"
+# expired tokens before they reach the exchange endpoint. Padding is restored
+# before decode: BSD base64 silently truncates unpadded input.
+jwt_payload="$(cut -d. -f2 "$token_path" | tr '_-' '/+' \
+  | awk '{ l = length($0); m = l % 4; if (m == 2) print $0 "=="; else if (m == 3) print $0 "="; else print }' \
+  | base64 --decode 2>/dev/null || true)"
 if ! jq -e \
   --arg issuer "$expected_issuer" \
   --arg audience "$audience" \
@@ -95,7 +98,9 @@ curl --fail --silent --show-error \
 # rather than leaving a long-running job to fail later with an ambiguous auth
 # error. Jobs expected to outlive this window must re-run this helper before
 # Terraform initialization/plan/apply; they must not fall back to API keys.
-rpst_payload="$(cut -d. -f2 "$rpst_path" | tr '_-' '/+' | base64 --decode 2>/dev/null || true)"
+rpst_payload="$(cut -d. -f2 "$rpst_path" | tr '_-' '/+' \
+  | awk '{ l = length($0); m = l % 4; if (m == 2) print $0 "=="; else if (m == 3) print $0 "="; else print }' \
+  | base64 --decode 2>/dev/null || true)"
 if ! jq -e '(.exp | type == "number") and (.exp > now)' <<<"$rpst_payload" >/dev/null; then
   echo "OCI RPST is malformed or expired." >&2
   exit 65
