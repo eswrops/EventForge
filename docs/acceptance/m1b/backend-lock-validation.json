@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "phase": "M1B Phase 4 — OCI backend verification",
+  "generated_at": "2026-10-26T23:15:20Z",
+  "git_commit": "c38991ffd0c5964233ee39aec490d8647edb6e1b",
+  "terraform_version": "1.12.2",
+  "environment": "OCI tenancy easwarendraece (namespace axrq1dasyz3y, region ap-hyderabad-1), operator session",
+  "disposable_key_rule": "All probes must use a disposable validation/<timestamp>/terraform.tfstate key; production keys (bootstrap/terraform.tfstate, platform/terraform.tfstate, frontend/terraform.tfstate) must never be probed destructively.",
+  "blocking_conditions": [
+    "The Terraform state bucket does not exist yet: oci os bucket list returned no buckets in the tenancy root, 'Test', or 'ManagedCompartmentForPaaS' compartments. infra/bootstrap has never been applied (by design — the bootstrap root creates the state bucket itself and requires an operator-controlled local apply with a customer-managed Vault key).",
+    "No federated identity exists (see federation-validation.json), and the native OCI backend with auth = ResourcePrincipal cannot initialize without one from this context."
+  ],
+  "checks": [
+    { "id": "backend-init-rpst", "description": "Backend initialization using ResourcePrincipal", "status": "BLOCKED", "detail": "scripts/ci/verify-oci-backend.sh is committed and reviewed; requires bucket + RPST." },
+    { "id": "state-write", "description": "State object creation using the authorized identity", "status": "BLOCKED", "detail": "verify-oci-backend.sh applies a single terraform_data lock probe to the disposable key." },
+    { "id": "state-read", "description": "State reads", "status": "BLOCKED", "detail": "verify-oci-backend.sh pulls the disposable state back and asserts the probe resource exists." },
+    { "id": "lock-acquire", "description": "Lock acquisition", "status": "BLOCKED", "detail": "Lock probe with 15s local-exec hold." },
+    { "id": "lock-contention", "description": "Concurrent lock contention rejected", "status": "BLOCKED", "detail": "Second plan with -lock-timeout=1s must fail with a lock error (script asserts the failure reason mentions lock)." },
+    { "id": "lock-release", "description": "Lock release", "status": "BLOCKED", "detail": "Post-destroy plan must acquire the released lock; probe then leaves only the disposable key in place." },
+    { "id": "object-versioning", "description": "State object versioning", "status": "BLOCKED", "detail": "Bucket versioning is declared in infra/bootstrap/main.tf (versioning enabled, 30-day noncurrent retention) and must be verified live after bootstrap." },
+    { "id": "state-encryption", "description": "State encryption with customer-managed key", "status": "BLOCKED", "detail": "kms_key_id is a required bootstrap variable and must be confirmed on the created bucket and objects." },
+    { "id": "state-recovery", "description": "State recovery from a prior version", "status": "BLOCKED", "detail": "Must be demonstrated via the documented incident procedure (never terraform state push -force, never force-unlock production state)." },
+    { "id": "plan-apply-key-isolation", "description": "Plan identity cannot overwrite real production state", "status": "BLOCKED", "detail": "Requires the plan identity policy (allow state-object read/lock but not overwrite of platform/terraform.tfstate) and a live denial probe against the real key." },
+    { "id": "instance-principal-denied", "description": "VM instance-principal access to state bucket denied", "status": "BLOCKED", "detail": "scripts/ci/verify-oci-backend-denied.sh is committed for this probe (grep-based denial classification after ripgrep fix); requires the buckets and instance-principal policies to exist." },
+    { "id": "static-review", "description": "Static review of backend safety properties", "status": "PASS", "detail": "Acceptance harness check 'oci-backend-safety' PASS: three distinct state keys, auth = ResourcePrincipal in plan/apply/backend-validation paths, kms_key_id wired in bootstrap. No terraform force-unlock path exists in any committed script." }
+  ],
+  "summary": { "pass": 1, "fail": 0, "not_run": 0, "blocked": 12 }
+}

@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-10-26T23:12:15Z",
+  "offline": true,
+  "checks": [
+    {
+      "name": "shell-syntax",
+      "status": "PASS",
+      "detail": "bash parses CI, acceptance, operational, and fixture scripts"
+    },
+    {
+      "name": "shell-lint",
+      "status": "PASS",
+      "detail": "ShellCheck found no diagnostics"
+    },
+    {
+      "name": "workflow-lint",
+      "status": "PASS",
+      "detail": "actionlint accepted all GitHub workflows"
+    },
+    {
+      "name": "wif-fixtures",
+      "status": "PASS",
+      "detail": "valid and rejected OIDC/RPST exchange fixtures passed"
+    },
+    {
+      "name": "safe-plan-fixtures",
+      "status": "PASS",
+      "detail": "safe-plan allow/deny fixtures passed"
+    },
+    {
+      "name": "terraform-version-and-locks",
+      "status": "PASS",
+      "detail": "all roots require Terraform >= 1.12 and have locked providers"
+    },
+    {
+      "name": "oci-backend-safety",
+      "status": "PASS",
+      "detail": "OCI backend keys are distinct, ResourcePrincipal is explicit, and state encryption is configured"
+    },
+    {
+      "name": "workflow-action-pins",
+      "status": "PASS",
+      "detail": "all third-party GitHub Actions are pinned to immutable commits"
+    },
+    {
+      "name": "terraform-format-and-validate",
+      "status": "PASS",
+      "detail": "all Terraform roots format and validate without a backend"
+    },
+    {
+      "name": "tracked-secret-material",
+      "status": "PASS",
+      "detail": "no tracked credential/state artifact or high-confidence secret pattern found"
+    },
+    {
+      "name": "ingress-disabled",
+      "status": "PASS",
+      "detail": "API listener, DNS, certificate and cache resources remain gated by false-by-default ingress"
+    },
+    {
+      "name": "acceptance-documentation",
+      "status": "PASS",
+      "detail": "acceptance guide, checklist, and live-validation runbook exist"
+    }
+  ],
+  "summary": {
+    "pass": 12,
+    "fail": 0,
+    "not_run": 0
+  }
+}

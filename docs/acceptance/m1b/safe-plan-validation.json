@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "phase": "M1B Phase 1/6 support — safe-plan policy validation",
+  "generated_at": "2026-10-26T23:15:20Z",
+  "git_commit": "c38991ffd0c5964233ee39aec490d8647edb6e1b",
+  "terraform_version": "1.12.2",
+  "environment": "offline fixture tests; executed in GitHub Actions run 40418147090 and locally",
+  "policy": "scripts/ci/platform-safe-plan-policy.json (platform) and scripts/ci/frontend-safe-plan-policy.json (frontend)",
+  "checks": [
+    { "id": "plan-noop", "description": "No-op plan is allowed", "status": "PASS" },
+    { "id": "plan-allowed", "description": "Additive creates in the reviewed allow-list are allowed (NSGs, rules, alarms, budget, terraform_data)", "status": "PASS" },
+    { "id": "plan-allowed-ingress", "description": "Gated ingress resources (certificate, listener, backends, DNS, cache rule) are allow-listed for create only", "status": "PASS" },
+    { "id": "plan-unapproved", "description": "Unapproved change is rejected (default deny)", "status": "PASS" },
+    { "id": "plan-delete", "description": "Delete is rejected without allow_delete", "status": "PASS" },
+    { "id": "plan-replace-delete-create", "description": "Replacement (delete then create) is rejected", "status": "PASS" },
+    { "id": "plan-replace-create-delete", "description": "Create-before-destroy replacement is rejected", "status": "PASS" },
+    { "id": "plan-imported-update", "description": "Protected-import update is rejected without allow_import_update", "status": "PASS" },
+    { "id": "plan-public-port", "description": "Public 0.0.0.0/0 exposure of 8080/3306 is rejected regardless of allow-list", "status": "PASS" },
+    { "id": "plan-unknown-ingress", "description": "Unknown (after_unknown) security-rule ingress attributes are rejected", "status": "PASS" },
+    { "id": "plan-malformed", "description": "Malformed or truncated plan JSON is rejected before policy evaluation", "status": "PASS" },
+    { "id": "plan-missing-resource-changes", "description": "Plan without resource_changes is rejected (empty plan cannot look safe)", "status": "PASS" }
+  ],
+  "static_guarantees": [
+    "enable_api_ingress defaults to false and gates every public-ingress resource via count.",
+    "Protected imports (VCN, app/lb/mysql subnets, api instances, MySQL DB system, load balancer) are regex-anchored in the policy and matching resources declare prevent_destroy.",
+    "The policy rejects any plan whose security-rule change carries unknown source/destination/port attributes, preventing a later reveal of public 8080/3306."
+  ],
+  "evidence_reference": "Job 'CI script and workflow checks' in https://github.com/eswrops/EventForge/actions/runs/40418147090; local run identical (tests/ci/test-safe-plan.sh).",
+  "summary": { "pass": 12, "fail": 0, "not_run": 0, "blocked": 0 }
+}

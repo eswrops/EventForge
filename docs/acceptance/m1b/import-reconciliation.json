@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "phase": "M1B Phase 5 — OCI inventory and import safety",
+  "generated_at": "2026-10-26T23:15:20Z",
+  "git_commit": "c38991ffd0c5964233ee39aec490d8647edb6e1b",
+  "terraform_version": "1.12.2",
+  "environment": "OCI tenancy easwarendraece, region ap-hyderabad-1, namespace axrq1dasyz3y (read-only operator session)",
+  "capture_method": "Read-only OCI CLI queries (iam, network, compute, lb, mysql, os, search) from the approved operator workstation. No resource was created, modified, or deleted; no import was attempted.",
+  "tenancy": {
+    "tenancy_ocid": "ocid1.tenancy.oc1..aaaaaaaazzqo7xp5qax5ebj375o7qgnpyhxfxwrfq5e3ldjoxngx7nouwtsq",
+    "tenancy_name": "easwarendraece",
+    "home_region": "ap-hyderabad-1",
+    "compartments": {
+      "root": "network resources (VCN, subnets, route tables, security lists, internet gateway, load balancer subnets) live here",
+      "test": {
+        "id": "ocid1.compartment.oc1..aaaaaaaar3kvayxcj4vuo6ydkoaxrh4yeovnvr6rgxr7kdljzijrpbxaz3ea",
+        "name": "Test",
+        "contents": "compute instances, MySQL DB system, public load balancer, LB VIP public IP"
+      },
+      "managedcompartmentforpaas": { "id": "ocid1.compartment.oc1..aaaaaaaaahunhkpsna5e224jnby5jycvactxnnhbz5wromt3beybld66pauq", "note": "Oracle-managed; contains only PSM-mgd-comp-policy" }
+    }
+  },
+  "network": {
+    "vcn": {
+      "name": "postgresmax-vcn",
+      "id": "ocid1.vcn.oc1.ap-hyderabad-1.amaaaaaatiosumiaz4zvhbqaopq7ljp4yq7gftrwdy2zmveizdmv62xvd6ca",
+      "cidr": "10.0.0.0/16",
+      "compartment": "root"
+    },
+    "route_table": {
+      "id": "ocid1.routetable.oc1.ap-hyderabad-1.aaaaaaaalxwsn3othszsg4e6tyovwg4z4nnn62zuoph4fzdaso3w4xxcmfwa",
+      "rules": [{ "destination": "0.0.0.0/0", "type": "CIDR_BLOCK", "target": "ocid1.internetgateway.oc1.ap-hyderabad-1.aaaaaaaantzrw3uz7jmd2izbdv3svp4caxo4vrnnpyw2patbn3gobivpcp5q" }],
+      "note": "Shared by all subnets below (single default route via internet gateway). Not managed by Terraform."
+    },
+    "subnets": [
+      { "role": "lb", "name": "rust-api-lb-public-subnet", "id": "ocid1.subnet.oc1.ap-hyderabad-1.aaaaaaaargdyoju3emyheunr6di75z2tl74khyf7tem6hwj5x5tmxt44q2bq", "cidr": "10.0.4.0/24" },
+      { "role": "mysql", "name": "rust-api-db-private-subnet", "id": "ocid1.subnet.oc1.ap-hyderabad-1.aaaaaaaaipwpkmvnxdzw2yduccugoq6pkojn7lpd3izpewyusyvi7ywp7ewa", "cidr": "10.0.3.0/24" },
+      { "role": "app", "name": "rust-api-test-public-subnet", "id": "ocid1.subnet.oc1.ap-hyderabad-1.aaaaaaaawemcohc6vzzqwkv3hbq3mcpl3wf3bslzb5wmheixtitqcoqiddra", "cidr": "10.0.2.0/24" },
+      { "role": "unrelated", "name": "postgresmax-public-subnet", "id": "ocid1.subnet.oc1.ap-hyderabad-1.aaaaaaaabnrscmbtmkqlhhqzekb53ylshb2kejxehrjvwhhzda3o2kavvrna", "cidr": "10.0.1.0/24" }
+    ],
+    "security_lists": [
+      { "name": "rust-api-lb-public", "id": "ocid1.securitylist.oc1.ap-hyderabad-1.aaaaaaaaelahefjk6ddczauhmu4tznf6pocrtkb7h26ihs2i4nlafoibdsya", "ingress": ["TCP 80 from 0.0.0.0/0", "TCP 443 from 0.0.0.0/0"], "egress": ["all to 0.0.0.0/0"] },
+      { "name": "rust-api-database-private", "id": "ocid1.securitylist.oc1.ap-hyderabad-1.aaaaaaaarwcfapns7orc6hvovfrt2md3xhko443sp5vz324b5c7pwiu7apoa", "ingress": ["TCP 1522 from 10.0.2.0/24", "TCP 3306 from 10.0.2.0/24"], "egress": ["all to 0.0.0.0/0"] },
+      { "name": "rust-api-test-ssh-only", "id": "ocid1.securitylist.oc1.ap-hyderabad-1.aaaaaaaairrc6gzsc5emsx6hhvajcd6nmmagbgqf2qy5zvb77dqrfo63sm3q", "ingress": ["TCP 22 from 49.207.205.137/32 (operator workstation)"], "egress": ["all to 0.0.0.0/0"] }
+    ],
+    "nsgs": "none exist in the tenancy (Terraform is expected to create the three EventForge NSGs as approved additive resources)"
+  },
+  "compute": [
+    { "name": "rust-api-test", "id": "ocid1.instance.oc1.ap-hyderabad-1.anuhsljrtiosumiceyilvbiclo7kynsdnzozmoeziwmsjdrhdwigvw5ibc4a", "shape": "VM.Standard.E2.1.Micro", "state": "RUNNING", "private_ip": "10.0.2.129", "public_ip": "129.225.99.202", "subnet": "app" },
+    { "name": "rust-api-worker", "id": "ocid1.instance.oc1.ap-hyderabad-1.anuhsljrtiosumicl5kpn6r7suoqgn4osm6pu3r7rrszwib3yuaeb65x7ooa", "shape": "VM.Standard.E2.1.Micro", "state": "RUNNING", "private_ip": "10.0.2.94", "public_ip": "129.225.99.0", "subnet": "app" }
+  ],
+  "load_balancer": {
+    "name": "rust-api-public-lb",
+    "id": "ocid1.loadbalancer.oc1.ap-hyderabad-1.aaaaaaaa4by2dj7zniovxz327ieyws33wcsxfu2rcu6dasnuk5f6yljmihvq",
+    "shape": "flexible (10-10 Mbps)",
+    "state": "ACTIVE",
+    "public_ip": "129.159.239.48",
+    "subnet": "lb",
+    "listeners": [],
+    "backend_sets": []
+  },
+  "mysql": {
+    "name": "rust-api-heatwave",
+    "id": "ocid1.mysqldbsystem.oc1.ap-hyderabad-1.aaaaaaaaes3clz2baohp34kuulobnhrp3cnz33bicso6r4syj7npztnvj2gq",
+    "shape": "MySQL.Free",
+    "version": "26.10.0",
+    "state": "ACTIVE",
+    "endpoint": { "ip": "10.0.3.18", "port": 3306, "port_x": 33060, "hostname": "rustmysql.rustdb.pgmax.oraclevcn.com", "modes": ["READ", "WRITE"] },
+    "subnet": "mysql"
+  },
+  "object_storage": {
+    "buckets": [],
+    "note": "No buckets exist anywhere in the tenancy; the Terraform state and backup buckets are created by infra/bootstrap (operator-controlled local apply)."
+  },
+  "import_mapping_review": [
+    { "terraform_address": "oci_core_vcn.existing", "live_resource": "postgresmax-vcn", "variable": "vcn_ocid", "status": "MAPPED" },
+    { "terraform_address": "oci_core_subnet.lb", "live_resource": "rust-api-lb-public-subnet", "variable": "lb_subnet_ocid", "status": "MAPPED" },
+    { "terraform_address": "oci_core_subnet.mysql", "live_resource": "rust-api-db-private-subnet", "variable": "mysql_subnet_ocid", "status": "MAPPED" },
+    { "terraform_address": "oci_core_subnet.app", "live_resource": "rust-api-test-public-subnet", "variable": "app_subnet_ocid", "status": "MAPPED" },
+    { "terraform_address": "oci_core_instance.api[\"vm1\"]", "live_resource": "rust-api-test (10.0.2.129)", "variable": "imported_api_instances", "status": "MAPPED" },
+    { "terraform_address": "oci_core_instance.api[\"vm2\"]", "live_resource": "rust-api-worker (10.0.2.94)", "variable": "imported_api_instances", "status": "MAPPED" },
+    { "terraform_address": "oci_mysql_mysql_db_system.existing", "live_resource": "rust-api-heatwave (10.0.3.18)", "variable": "mysql_db_system_ocid + mysql_private_ip", "status": "MAPPED" },
+    { "terraform_address": "oci_load_balancer_load_balancer.existing", "live_resource": "rust-api-public-lb (129.159.239.48)", "variable": "load_balancer_ocid + load_balancer_public_ip", "status": "MAPPED" }
+  ],
+  "comparison_findings": [
+    "Cross-compartment layout: network resources sit in the root compartment while compute/MySQL/LB sit in 'Test'. The platform root handles this correctly: NSGs are created in var.compartment_ocid and VCN/subnet OCIDs are passed as inputs, so no re-parenting drift is expected at import time.",
+    "All EventForge subnets share one route table with a 0.0.0.0/0 internet-gateway route; the 'private' DB subnet is therefore routed for egress but has no public IP and its security list limits ingress to the app subnet. Terraform does not manage route tables, so no plan-induced drift is possible; recorded as an observation, not corrected.",
+    "Live LB has no listeners and no backend sets, matching enable_api_ingress = false; the first gated plan may only create NSGs, monitoring, budget, and terraform_data per scripts/ci/platform-safe-plan-policy.json.",
+    "No NSGs exist yet, so the NSG-security-rule creates in the safe-plan policy are additive-only expectations.",
+    "Both VNICs have empty nsg_ids, consistent with the import template appending (not replacing) NSG IDs."
+  ],
+  "import_preconditions_checklist": [
+    { "condition": "Existing state backups captured", "status": "NOT_RUN", "detail": "No Terraform state exists anywhere yet (no backend bucket); first import follows the initial platform apply sequencing in docs/bootstrap.md." },
+    { "condition": "Remote backend health verified", "status": "BLOCKED", "detail": "State bucket does not exist; see backend-lock-validation.json." },
+    { "condition": "Intended Terraform root confirmed", "status": "PASS", "detail": "infra/platform is the import root; imported_resources.tf is git-ignored operator input per docs/imports.md." },
+    { "condition": "Operator approval recorded", "status": "NOT_RUN", "detail": "No operator approval record for imports exists yet; imports were not performed." }
+  ],
+  "reconciliation": {
+    "refresh_only_plan": "NOT_RUN",
+    "detail": "terraform plan -refresh-only requires an initialized backend and prior imports; both preconditions are absent. No drift correction was performed and none is proposed without operator review.",
+    "normal_plan": "NOT_RUN",
+    "rejection_gates_armed": "Any future plan is checked by scripts/ci/assert-safe-plan.sh with scripts/ci/platform-safe-plan-policy.json: default-deny, protected_imports for VCN/subnets/instances/MySQL/LB, no delete without allow_delete, no public 8080/3306 ingress, no unknown ingress attributes. All twelve safe-plan fixture cases PASS in CI run 40418147090."
+  },
+  "changes_to_existing_resources": "None. No OCI resource was modified during this acceptance run.",
+  "summary": { "pass": 1, "fail": 0, "not_run": 2, "blocked": 1 }
+}

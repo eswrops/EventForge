@@ -1,0 +1,84 @@
+{
+  "schema_version": 1,
+  "phase": "M1B Phase 2 — GitHub environment security",
+  "generated_at": "2026-10-26T23:15:20Z",
+  "git_commit": "c38991ffd0c5964233ee39aec490d8647edb6e1b",
+  "environment": "github:eswrops/EventForge (live API inspection via gh CLI, account eswrops)",
+  "repository": {
+    "full_name": "eswrops/EventForge",
+    "repository_id": "R_kgDOVYg5cg",
+    "owner_id": "U_kgDODigvWw",
+    "visibility": "public",
+    "default_branch": "main"
+  },
+  "checks": [
+    {
+      "id": "oidc-subject-format",
+      "description": "Actual GitHub OIDC subject format for environment jobs",
+      "status": "PASS",
+      "detail": "Repo policies and scripts/ci/configure-oci-wif.sh require sub == 'repo:<owner>/<repo>:environment:<env>' (GitHub environment jobs) and validate iss, aud, repository, environment, and exp before exchange. The live JWT itself could not be fetched from this workstation (id-token is only issued to Actions jobs), so the claim assertions are verified by the committed checker plus fixture tests, not by a live token capture."
+    },
+    {
+      "id": "environment-production-plan",
+      "description": "Protected production-plan environment exists",
+      "status": "BLOCKED",
+      "detail": "GET /repos/eswrops/EventForge/environments returned total_count: 0. The environment does not exist, so it carries no required reviewers and no deployment branch policy. Because jobs reference 'environment: production-plan', the first dispatch would have GitHub auto-create it with NO protection rules."
+    },
+    {
+      "id": "environment-production",
+      "description": "Protected production environment exists",
+      "status": "BLOCKED",
+      "detail": "Same finding as production-plan; total_count: 0."
+    },
+    {
+      "id": "branch-protection-main",
+      "description": "main branch protection (workflow ref gate)",
+      "status": "BLOCKED",
+      "detail": "GET /branches/main/protection returned 404 'Branch not protected'. Any collaborator can push to main, and the plan/apply/preflight/backend workflows self-gate only on github.ref == 'refs/heads/main'."
+    },
+    {
+      "id": "required-reviewer-availability",
+      "description": "Required reviewer availability for the account plan",
+      "status": "PASS",
+      "detail": "The repository is public; GitHub provides environment deployment protection rules, including required reviewers and deployment branch policies, on public repositories for all plans. The single collaborator (eswrops, admin) can serve as the required reviewer."
+    },
+    {
+      "id": "plan-apply-boundary",
+      "description": "Separate plan/apply OAuth clients and separate OCI trust policies",
+      "status": "BLOCKED",
+      "detail": "No OCI_WIF_CONFIG_JSON secret exists at repository or environment level (Actions secrets list is empty), so no trust boundaries exist yet. The repository design (docs/bootstrap.md, infra/bootstrap/variables.tf) mandates separate production-plan and production JSON secrets, separate OAuth clients, and separate policy statements; the OCI side has no dynamic groups and no GitHub/WIF policies (verified live), so neither trust exists yet."
+    },
+    {
+      "id": "minimum-workflow-permissions",
+      "description": "Minimum default workflow permissions",
+      "status": "PASS",
+      "detail": "default_workflow_permissions = 'read'; can_approve_pull_request_reviews = false. Each workflow also declares least-privilege permissions blocks (contents: read; id-token: write only where federation is used; contents: write only for releases)."
+    },
+    {
+      "id": "concurrency",
+      "description": "Workflow concurrency configuration",
+      "status": "PASS",
+      "detail": "production-plan uses group 'eventforge-production-plan', production uses 'eventforge-production-apply', backend validation 'eventforge-oci-backend-validation', frontend 'eventforge-production-frontend'; all with cancel-in-progress: false so a plan cannot be cancelled mid-run by a newer dispatch."
+    },
+    {
+      "id": "allowed-actions-and-pinning",
+      "description": "Allowed Actions and SHA pinning enforcement",
+      "status": "FAIL",
+      "detail": "allowed_actions = 'all' and sha_pinning_required = false. The committed workflows are all SHA-pinned, but the repository does not enforce it. Hardening recommendation: restrict allowed actions to the selected set and enable SHA pinning enforcement. No protection was weakened during this acceptance."
+    },
+    {
+      "id": "fork-pr-approval-setting",
+      "description": "Fork pull-request workflow approval requirement",
+      "status": "NOT_RUN",
+      "detail": "The REST endpoint for fork workflow approval settings is not exposed for user-owned repositories (404); verify in Settings > Actions via the web UI and record in the operator evidence log."
+    },
+    {
+      "id": "secret-scanning",
+      "description": "Secret scanning and push protection",
+      "status": "PASS",
+      "detail": "secret_scanning enabled, secret_scanning_push_protection enabled. (validity checks and non-provider patterns are disabled — optional hardening.)"
+    }
+  ],
+  "notes": "An environment name alone does not create an approval boundary; production-plan/production must be created with required reviewers and a deployment branch policy restricted to main before any live federation test is run from them.",
+  "summary": { "pass": 5, "fail": 1, "not_run": 1, "blocked": 4 }
+}
