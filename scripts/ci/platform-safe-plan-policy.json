@@ -1,0 +1,26 @@
+{
+  "protected_imports": [
+    "^oci_core_vcn\\.existing$",
+    "^oci_core_subnet\\.(app|lb|mysql)$",
+    "^oci_core_instance\\.api(\\[.*\\])?$",
+    "^oci_mysql_mysql_db_system\\.existing$",
+    "^oci_load_balancer_load_balancer\\.existing$"
+  ],
+  "allow": [
+    { "address_regex": "^oci_core_network_security_group\\.(lb|app|db)$", "actions": ["create"] },
+    { "address_regex": "^oci_core_network_security_group_security_rule\\.", "actions": ["create"] },
+    { "address_regex": "^oci_monitoring_alarm\\.", "actions": ["create"] },
+    { "address_regex": "^oci_budget_budget\\.monthly$", "actions": ["create"] },
+    { "address_regex": "^oci_budget_alert_rule\\.", "actions": ["create"] },
+    { "address_regex": "^terraform_data\\.api_origin_generation$", "actions": ["create"] },
+    { "address_regex": "^tls_private_key\\.api_origin\\[0\\]$", "actions": ["create"] },
+    { "address_regex": "^tls_cert_request\\.api_origin\\[0\\]$", "actions": ["create"] },
+    { "address_regex": "^cloudflare_origin_ca_certificate\\.api\\[0\\]$", "actions": ["create"] },
+    { "address_regex": "^oci_load_balancer_certificate\\.api_origin\\[0\\]$", "actions": ["create"] },
+    { "address_regex": "^oci_load_balancer_backend_set\\.api\\[0\\]$", "actions": ["create"] },
+    { "address_regex": "^oci_load_balancer_backend\\.api\\[.*\\]$", "actions": ["create"] },
+    { "address_regex": "^oci_load_balancer_listener\\.https\\[0\\]$", "actions": ["create"] },
+    { "address_regex": "^cloudflare_dns_record\\.api\\[0\\]$", "actions": ["create"] },
+    { "address_regex": "^cloudflare_ruleset\\.api_no_cache\\[0\\]$", "actions": ["create"] }
+  ]
+}

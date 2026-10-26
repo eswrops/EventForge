@@ -1,0 +1,5 @@
+{
+  "resource_changes": [
+    {"address":"oci_core_network_security_group_security_rule.unknown","type":"oci_core_network_security_group_security_rule","change":{"actions":["create"],"after":{"source":"0.0.0.0/0","tcp_options":{}},"after_unknown":{"tcp_options":{"destination_port_range":true}}}}
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "resource_changes": [
+    {"address":"oci_core_network_security_group_security_rule.lb_to_app","type":"oci_core_network_security_group_security_rule","change":{"actions":["create"],"after":{"source":"nsg-id","tcp_options":{"destination_port_range":{"min":8080,"max":8080}}},"after_unknown":{}}}
+  ]
+}

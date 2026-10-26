@@ -5,14 +5,11 @@ on:
     paths:
       - 'infra/**'
       - '.github/workflows/terraform.yml'
+      - '.github/workflows/terraform-plan.yml'
+      - '.github/workflows/terraform-apply.yml'
+      - '.github/workflows/oci-backend-validation.yml'
       - 'scripts/ci/**'
-  workflow_dispatch:
-    inputs:
-      action:
-        description: 'Run a speculative plan or the protected production apply'
-        required: true
-        type: choice
-        options: [plan, apply]
+      - 'tests/ci/**'
 
 permissions:
   contents: read
@@ -26,9 +23,10 @@ jobs:
       matrix:
         root: [infra/bootstrap, infra/platform, infra/frontend]
     steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
         with:
+          terraform_version: 1.12.2
           terraform_wrapper: false
       - name: Check formatting
         working-directory: ${{ matrix.root }}
@@ -40,68 +38,23 @@ jobs:
         working-directory: ${{ matrix.root }}
         run: terraform validate
 
-  production:
-    if: github.event_name == 'workflow_dispatch'
-    needs: validate
+  ci-scripts:
+    name: CI script and workflow checks
     runs-on: ubuntu-latest
-    environment: production
-    concurrency:
-      group: eventforge-production-terraform
-      cancel-in-progress: false
-    permissions:
-      contents: read
-      id-token: write
-    strategy:
-      fail-fast: false
-      matrix:
-        root: [infra/platform, infra/frontend]
-    env:
-      OCI_AUTH: WorkloadIdentityFederation
-      OCI_REGION: ${{ vars.OCI_REGION }}
-      TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      TF_VAR_release_tag: ${{ github.sha }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          terraform_wrapper: false
-      - name: Configure OCI workload federation
-        shell: bash
-        env:
-          OCI_WIF_CONFIG_JSON: ${{ secrets.OCI_WIF_CONFIG_JSON }}
-        run: scripts/ci/configure-oci-wif.sh
-      - name: Write protected root inputs
-        shell: bash
-        env:
-          TFVARS: ${{ matrix.root == 'infra/platform' && secrets.TF_VARS_PLATFORM || secrets.TF_VARS_FRONTEND }}
+          go-version: '1.24.0'
+      - name: Run shell fixtures
         run: |
-          test -n "$TFVARS"
-          printf '%s' "$TFVARS" > "${{ matrix.root }}/terraform.auto.tfvars"
-      - name: Initialize OCI state backend
-        working-directory: ${{ matrix.root }}
-        env:
-          TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
-          OCI_OBJECT_STORAGE_NAMESPACE: ${{ vars.OCI_OBJECT_STORAGE_NAMESPACE }}
+          bash -n scripts/ci/*.sh scripts/oci-free-tier-preflight.sh ops/scripts/* tests/ci/*.sh
+          tests/ci/run.sh
+          jq empty scripts/ci/*-safe-plan-policy.json
+      - name: Lint GitHub Actions workflows
         run: |
-          test -n "$TF_STATE_BUCKET" && test -n "$OCI_OBJECT_STORAGE_NAMESPACE"
-          cat > backend.hcl <<EOF
-          bucket    = "$TF_STATE_BUCKET"
-          namespace = "$OCI_OBJECT_STORAGE_NAMESPACE"
-          key       = "${{ matrix.root == 'infra/platform' && 'platform' || 'frontend' }}/terraform.tfstate"
-          region    = "${OCI_REGION}"
-          EOF
-          terraform init -input=false -backend-config=backend.hcl
-      - name: Create plan
-        working-directory: ${{ matrix.root }}
-        run: terraform plan -input=false -out=production.tfplan
-      - name: Enforce non-destructive plan
-        if: matrix.root == 'infra/platform'
-        working-directory: ${{ matrix.root }}
-        run: |
-          terraform show -json production.tfplan > production.json
-          ../../scripts/ci/assert-safe-plan.sh production.json
-      - name: Apply protected plan
-        if: inputs.action == 'apply'
-        working-directory: ${{ matrix.root }}
-        run: terraform apply -input=false production.tfplan
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.7
+          actionlint_dir="$(go env GOBIN)"
+          if [[ -z "$actionlint_dir" ]]; then actionlint_dir="$(go env GOPATH)/bin"; fi
+          "$actionlint_dir/actionlint"
 

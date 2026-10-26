@@ -21,4 +21,6 @@ cloudflare_api_token  = "set-through-TF_VAR_cloudflare_api_token-instead"
 root_domain           = "example.com"
 operations_topic_id   = "ocid1.onstopic.oc1..replace-me"
 notification_email    = "ops@example.com"
+enable_api_ingress    = false
+origin_certificate_generation = "v1"
 
