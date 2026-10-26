@@ -1,0 +1,9 @@
+{
+  "resource_changes": [
+    {
+      "address": "oci_core_network_security_group.app",
+      "type": "oci_core_network_security_group",
+      "change": { "actions": ["create"], "after": {} }
+    }
+  ]
+}

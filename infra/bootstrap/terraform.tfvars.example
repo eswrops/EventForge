@@ -7,8 +7,21 @@ instance_ocids = [
   "ocid1.instance.oc1..replace-vm2",
 ]
 notification_email = "ops@example.com"
+state_version_retention_days = 30
+# Customer-managed OCI Vault key for Terraform-state encryption at rest.
+state_bucket_kms_key_id = "ocid1.key.oc1..replace-me"
 
-# Create this statement from the OCI identity-domain federation wizard. It must
-# constrain the GitHub Actions principal to your production environment.
-github_oidc_policy_statement = "Allow any-user to inspect compartments in compartment id ocid1.compartment.oc1..replace-me where request.principal.type = 'workload'"
+# Create separate statements from the OCI identity-domain federation setup.
+# Both workload identities must be bound to the expected repository/environment
+# in the trust configuration and constrain request.principal attributes here.
+# The plan identity may read infrastructure and manage only state/lock objects.
+github_plan_oidc_policy_statements = [
+  "Allow any-user to inspect compartments in compartment id ocid1.compartment.oc1..replace-me where request.principal.type = 'workload'",
+]
+
+# The apply identity receives only the explicit EventForge write permissions
+# required by this Terraform configuration.
+github_apply_oidc_policy_statements = [
+  "Allow any-user to inspect compartments in compartment id ocid1.compartment.oc1..replace-me where request.principal.type = 'workload'",
+]
 

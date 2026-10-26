@@ -1,0 +1,9 @@
+{
+  "resource_changes": [
+    {
+      "address": "oci_core_vcn.existing",
+      "type": "oci_core_vcn",
+      "change": { "actions": ["update"], "after": {} }
+    }
+  ]
+}

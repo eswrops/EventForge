@@ -1,0 +1,9 @@
+{
+  "protected_imports": [],
+  "allow": [
+    { "address_regex": "^cloudflare_workers_script\\.frontend$", "actions": ["create"] },
+    { "address_regex": "^cloudflare_workers_script\\.frontend$", "actions": ["update"] },
+    { "address_regex": "^cloudflare_workers_custom_domain\\.app$", "actions": ["create"] },
+    { "address_regex": "^cloudflare_workers_script_subdomain\\.frontend$", "actions": ["create"] }
+  ]
+}

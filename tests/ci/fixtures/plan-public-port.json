@@ -1,0 +1,15 @@
+{
+  "resource_changes": [
+    {
+      "address": "oci_core_network_security_group_security_rule.bad",
+      "type": "oci_core_network_security_group_security_rule",
+      "change": {
+        "actions": ["create"],
+        "after": {
+          "source": "0.0.0.0/0",
+          "tcp_options": { "destination_port_range": { "min": 8080, "max": 8080 } }
+        }
+      }
+    }
+  ]
+}

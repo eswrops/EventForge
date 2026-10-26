@@ -1,0 +1,33 @@
+name: OCI backend validation
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  validate-backend:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: production-plan
+    concurrency:
+      group: eventforge-oci-backend-validation
+      cancel-in-progress: false
+    env:
+      OCI_REGION: ${{ vars.OCI_REGION }}
+      TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
+      OCI_OBJECT_STORAGE_NAMESPACE: ${{ vars.OCI_OBJECT_STORAGE_NAMESPACE }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
+        with:
+          terraform_version: 1.12.2
+          terraform_wrapper: false
+      - name: Exchange GitHub identity for OCI RPST
+        env:
+          OCI_WIF_CONFIG_JSON: ${{ secrets.OCI_WIF_CONFIG_JSON }}
+        run: scripts/ci/configure-oci-wif.sh
+      - name: Verify backend state and locking
+        run: scripts/ci/verify-oci-backend.sh

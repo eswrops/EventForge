@@ -6,7 +6,9 @@ crash.log
 *.auto.tfvars
 *.auto.tfvars.json
 backend.hcl
+infra/platform/imported_resources.tf
 .env
 dist/
 target/
+acceptance-report.json
 

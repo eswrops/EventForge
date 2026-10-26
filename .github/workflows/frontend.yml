@@ -9,23 +9,24 @@ permissions:
 
 jobs:
   publish:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     environment: production
     concurrency:
       group: eventforge-production-frontend
       cancel-in-progress: false
     env:
-      OCI_AUTH: WorkloadIdentityFederation
       OCI_REGION: ${{ vars.OCI_REGION }}
       TF_VAR_cloudflare_api_token: ${{ secrets.CLOUDFLARE_API_TOKEN }}
       TF_VAR_release_tag: ${{ github.sha }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@40f1582b2485089dde7abd97c1529aa768e1baff # stable
         with:
           targets: wasm32-unknown-unknown
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
         with:
+          terraform_version: 1.12.2
           terraform_wrapper: false
       - name: Build frontend when application source is available
         shell: bash
@@ -54,9 +55,16 @@ jobs:
           namespace = "$OCI_OBJECT_STORAGE_NAMESPACE"
           key       = "frontend/terraform.tfstate"
           region    = "${OCI_REGION}"
+          auth      = "ResourcePrincipal"
           EOF
           terraform init -input=false -backend-config=backend.hcl
+      - name: Create and enforce protected frontend plan
+        working-directory: infra/frontend
+        run: |
+          terraform plan -input=false -out=production.tfplan
+          terraform show -json production.tfplan > production-plan.json
+          ../../scripts/ci/assert-safe-plan.sh --policy ../../scripts/ci/frontend-safe-plan-policy.json production-plan.json
       - name: Deploy Worker static assets
         working-directory: infra/frontend
-        run: terraform apply -input=false -auto-approve
+        run: terraform apply -input=false production.tfplan
 

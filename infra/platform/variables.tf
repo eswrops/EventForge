@@ -62,3 +62,20 @@ variable "monthly_budget_amount" {
   default = 5
 }
 
+variable "enable_api_ingress" {
+  type        = bool
+  default     = false
+  description = "Create the public API certificate, load-balancer listener/backends, DNS record, and cache rule only after both API hosts pass readiness checks."
+}
+
+variable "origin_certificate_generation" {
+  type        = string
+  default     = "v1"
+  description = "Deliberately bump to rotate the Cloudflare Origin CA key and OCI load-balancer certificate."
+
+  validation {
+    condition     = can(regex("^[a-z0-9-]+$", var.origin_certificate_generation))
+    error_message = "origin_certificate_generation must contain only lowercase letters, numbers, and hyphens."
+  }
+}
+
