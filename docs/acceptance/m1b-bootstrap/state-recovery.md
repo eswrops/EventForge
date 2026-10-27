@@ -160,7 +160,7 @@ oci os object head --bucket-name eventforge-tfstate-prod \
 #    (validation/restore-test-<RUN_ID>/terraform.tfstate, confirmed absent
 #    beforehand), waiting for the asynchronous copy; the none-match header
 #    makes the service reject the copy if the scratch key appeared meanwhile:
-oci os object copy --source-bucket eventforge-tfstate-prod \
+oci os object copy --bucket-name eventforge-tfstate-prod \
   --source-object-name validation/live-acceptance-<RUN_ID>/terraform.tfstate \
   --source-version-id <noncurrent-version-id> \
   --destination-bucket eventforge-tfstate-prod \
@@ -194,7 +194,7 @@ drift is never auto-corrected.
 
 | Situation | Rollback |
 | --- | --- |
-| Failed bootstrap apply | `terraform apply` is not partially committed; fix inputs and re-plan. Buckets/policies created are removable via the operator console after review (never `terraform destroy` against production without a separate approval). |
+| Failed bootstrap apply | **Terraform CAN partially commit**: an apply that fails midway leaves every resource it already created live in OCI, and depending on the failure point some of them may or may not be recorded in state. After any failed apply, reconcile the live inventory against `terraform state list`/`state pull` (and `oci` reads) before re-planning; import orphans or remove stale state entries only after review. Buckets/policies created are removable via the operator console after review (never `terraform destroy` against production without a separate approval). |
 | Bad backend migration | Preserve the local backup kept in §2, verify whether the remote key was written, and stop for incident approval. Never overwrite remote state with `state push -force`; use the documented version-copy recovery only after approval. |
 | Lock stuck on a disposable key | Wait for the 15 s probe to finish. If the lock object still survives, deleting it is a mutation that requires a separate scoped approval naming the exact object (positively verify its `validation/` prefix, age, and owner via `oci os object head` first) — the validation scripts never remove locks and never `force-unlock`. |
 | Lock stuck on production | Never `force-unlock`. Verify no plan/apply is running (Actions run history), then use the documented incident procedure: confirm the lock object's age/owner, remove the lock object via the operator session with an explicit approval record, and re-lock. |
