@@ -1,0 +1,172 @@
+{
+  "track": "M1-LOCAL",
+  "deployment_mode": "LOCAL_OPERATOR",
+  "oci_federation": "DEFERRED",
+  "github_stage_2_iam": "DEFERRED",
+  "operator": {
+    "name": "easwarendra.ece@gmail.com",
+    "ocid": "ocid1.user.oc1..aaaaaaaajkgm655z4laek4fguupilgn6qnwa4g3gxo5frybr7syjtdnigskq",
+    "workstation": "darwin_arm64 (macOS)",
+    "terraform": "1.12.2 (pinned /Users/eswr/tools/terraform/1.12.2/terraform)",
+    "auth": "OCI CLI 3.95.1 API-key profile DEFAULT"
+  },
+  "git_revision_at_baseline": "974c9b5c0de632c6e605a65dcc485f5ddff99aa2",
+  "timestamp": "2026-10-27",
+  "oci_remote_state": {
+    "bucket": "eventforge-tfstate-prod",
+    "namespace": "axrq1dasyz3y",
+    "region": "ap-hyderabad-1",
+    "posture": "NoPublicAccess, versioning Enabled, CMK-bound (key ENABLED, SOFTWARE protection), 30-day noncurrent-version lifecycle",
+    "keys": {
+      "bootstrap": "present (lineage a79177dd-2c02-084e-ddf6-29f346b2fa78, serial 1, 8 addresses)",
+      "platform": "ABSENT \u2014 created only by the approved import flow",
+      "frontend": "ABSENT"
+    }
+  },
+  "gates": {
+    "M1_LOCAL_BASELINE": "PASS",
+    "LOCAL_SCRIPTS": "PASS",
+    "PRE_IMPORT_SECURITY_REVIEW": "PASS",
+    "OCI_INVENTORY": "PASS",
+    "OCI_IMPORTS": "PASS",
+    "M1C_PLATFORM": "PASS",
+    "OPERATIONS_REVIEW": "PASS",
+    "M1_LOCAL_REPORT": "PASS",
+    "OCI_FEDERATION": "DEFERRED",
+    "GITHUB_STAGE_2_IAM": "DEFERRED",
+    "IAM_DENIAL": "NOT_RUN",
+    "ONS_SUBSCRIPTION_CONFIRMATION": "BLOCKED",
+    "APPLICATION_DEPLOYMENT": "NOT_RUN",
+    "NETWORK_SECURITY_ENFORCEMENT": "PASS (2026-10-27 post-apply live inspection: effective posture closed \u2014 no public 8080/3306; NSG attachment deliberately deferred to the separately reviewed ingress-enablement gate)",
+    "M1_LOCAL_DECLARATIVE_REPRODUCIBILITY": "PASS (imported-resource declarations tracked in Git; clean-checkout offline plan = 37 no-op addresses, zero changes)",
+    "LOCAL_DEPLOYMENT_TOOLING": "PASS after review/merge of the m1-local-acceptance PR (behavioral guard tests added)"
+  },
+  "import_execution": {
+    "date": "2026-10-27",
+    "approval": "docs/acceptance/m1-local/approvals/oci-import-approval.md (commit 974c9b5, APPROVER Koka Easwarendra <easwarendra.ece@gmail.com>)",
+    "state_lineage": "cdda242b-92c1-4371-5b43-495f3849fc4d",
+    "state_serial": 8,
+    "imported": 8,
+    "id_verification": "every state entry ID verified against the reviewed OCID; per-import snapshots retained",
+    "reconciliation": "refresh-only clean: zero resource changes (independently re-verified; prior_state holds all 8)",
+    "live_estate": "untouched: VMs RUNNING, MySQL ACTIVE, LB unchanged/no listeners, no NSG or security-list changes",
+    "evidence": "/Users/eswr/secure/evidence/m1local-20261027T171413Z/ + independent verify run m1local-20261027T172009Z (13/0)",
+    "script_defects_found_during_execution": [
+      "verifier matched .address on raw state JSON (no such field) \u2014 fixed by rebuilding from type/name/index_key",
+      "grep -cx regex vs literal api[\"vm1\"] \u2014 fixed with grep -cFx",
+      "drift extractor failed on Terraform 1.12's omitted empty resource_changes key \u2014 fixed with (.resource_changes // [])[] in import + verify scripts"
+    ],
+    "mysql_credential_note": "vault value used as password (27 chars); admin username placeholder 'operator-vault-heatwave-admin' \u2014 both write-only and permanently ignore_changes-ed, cannot affect the DB; operator should record real username/refresh vault"
+  },
+  "pre_import_security_review": {
+    "date": "2026-10-27",
+    "gitignore_hardening": "terraform.tfvars + terraform.tfvars.json now ignored (verified with git check-ignore -v); examples remain tracked",
+    "tracked_secret_audit": "clean (no pem/key/state/plan/tfvars tracked; no staged diffs; no high-confidence secret patterns)",
+    "authorization_hardening": "imports/apply/init-existing-state now require written approval records (docs/acceptance/m1-local/approvals/) + matching env attestation \u2014 no env-only authorization",
+    "secret_source": "M1_EXTRA_VAR_FILE contract: 0600 operator file outside the repository; repo terraform.tfvars is a 0600-gated last resort",
+    "script_audit_fixes": [
+      "written approval records for OCI-IMPORT / PLATFORM-APPLY / PLATFORM-INIT-EXISTING-STATE",
+      "explicit chmod 600 on saved plans, plan JSON, and state snapshots",
+      "workspace-default check added to verify",
+      "region args converted to quoted arrays (shellcheck clean)",
+      "shellcheck extended to scripts/local + tests/local in the acceptance harness"
+    ],
+    "config_defect_caught": "app-subnet security-list OCID hand-transcription error (missing char) found by scripts/local/m1-verify-import-config.sh and corrected to the live bundle value BEFORE approval",
+    "config_verification": "34 PASS / 0 FAIL against the live discovery bundle; all 8 import-executor OCIDs verified char-for-char"
+  },
+  "import_inventory": {
+    "reconciled": 8,
+    "reconciliation_result": "16 PASS / 0 FAIL (scripts/local/m1-oci-inventory.sh, bundle /Users/eswr/secure/evidence/m1local-20261027T160117Z/oci-inventory.json)",
+    "execution": "NOT_EXECUTED \u2014 stopped at OCI-IMPORT approval gate",
+    "created_resources": []
+  },
+  "plan_apply_records": {
+    "round_1": {
+      "plan_sha256": "255916843e5a3579a74283fe12d0b01b774daa29cbdce8842c6e237eeb7519a4",
+      "approval": "approvals/platform-apply-approval.md",
+      "result": "25 of 29 creates applied; oci_budget_budget.monthly 400-InvalidParameter (child-compartment placement) stopped the run; zero orphans; evidence m1local-20261027T173416Z"
+    },
+    "round_2": {
+      "plan_sha256": "e495af3f615e933e720462ead3f9cc69687b73b59f3a72dc03498844e0b98252",
+      "approval": "approvals/platform-apply-approval-2-budget-fix.md",
+      "config_fix": "monitoring.tf: budget compartment_id=var.tenancy_ocid, targets=[var.compartment_ocid] (OCI budgets are tenancy-root-managed; target_compartment_id deprecated)",
+      "result": "apply complete; state serial 10, 37 addresses; evidence m1local-20261027T173712Z"
+    },
+    "safe_plan_policy": "PASS both rounds (direction-aware NSG-reference unknown handling added with regression fixtures)",
+    "live_verification": "m1-verify.sh 18 PASS / 0 FAIL (m1local-20261027T173816Z): NSGs/rules/alarms/budget live, no public 8080/3306, no listeners, no ingress resources, drift clean"
+  },
+  "created_resources": {
+    "nsgs": [
+      "oci_core_network_security_group.lb",
+      "oci_core_network_security_group.app",
+      "oci_core_network_security_group.db"
+    ],
+    "nsg_rules": 19,
+    "alarms": [
+      "oci_monitoring_alarm.cpu",
+      "oci_monitoring_alarm.unhealthy_backends"
+    ],
+    "budget": "oci_budget_budget.monthly (tenancy root, targets Test compartment) + 3 alert rules",
+    "metadata": "terraform_data.api_origin_generation",
+    "total": 29,
+    "deleted_or_replaced": 0
+  },
+  "network_security": {
+    "pre_apply_posture": "VERIFIED \u2014 no NSGs exist, no public 8080/3306 rules, LB has zero listeners, MySQL on private subnet only",
+    "planned": "3 NSGs + 19 rules (443 from 15 reviewed Cloudflare ranges, 8080 LB\u2192app only, 22 operator /32, 3306 app\u2194db only)",
+    "verify_gate": "scripts/local/m1-verify.sh (fails closed; failed listings never treated as absence)"
+  },
+  "monitoring_budget": {
+    "alarms": "CREATED \u00d72, both enabled (verified live): eventforge-compute-cpu-high, eventforge-unhealthy-backends \u2192 topic eventforge-operations",
+    "budget": "CREATED: eventforge-monthly at tenancy root (targets Test compartment) + 3 alert rules (75/100 actual, 100 forecast)",
+    "ons_subscription": "PENDING confirmation for eswr.ops@gmail.com (verified live 2026-10-27) \u2014 alarm/budget email delivery must not be marked PASS until the confirmation is clicked"
+  },
+  "cost": {
+    "projected_monthly_usd": 0,
+    "always_free_estate": "2\u00d7 E2.1.Micro, MySQL.Free, 10 Mbps flexible LB, KB-scale object storage",
+    "additive_plan_cost": "$0 (NSGs/rules/alarms/budget are free-tier)"
+  },
+  "existing_resource_health": {
+    "vm1_rust-api-test": "RUNNING",
+    "vm2_rust-api-worker": "RUNNING",
+    "mysql_rust-api-heatwave": "ACTIVE",
+    "load_balancer": "present, no listeners, flexible 10-10",
+    "state_bucket_backups": "NoPublicAccess + versioning Enabled",
+    "monitoring": "2 alarms enabled; budget eventforge-monthly (tenancy root) + 3 alert rules"
+  },
+  "remaining_risks": [
+    "ONS subscription unconfirmed \u2014 alarm/budget alert delivery unproven until the confirmation email is clicked (B3)",
+    "Oracle SR latency for federation enablement (clients' secrets rotation advised if SR exceeds a quarter)",
+    "MySQL admin username recorded only as the documented placeholder in the operator var file; both credential fields are write-only and permanently ignore_changes-ed (see imports.md \u00a76)",
+    "NSG attachment to existing VM VNICs/LB deliberately deferred to a separately reviewed update at ingress enablement",
+    "Budget/alarms live but notification delivery untested until B3 resolves"
+  ],
+  "deferred_work": {
+    "federation": "Oracle SR \u2192 exchange probe workflows \u2192 record var_name/var_ext_* claims \u2192 Stage-2 IAM",
+    "release_path": "GitHub-releases installer remains PREPARED-only; a tested local-release mechanism is a separate later mechanism",
+    "m2": "not started (rule 16)"
+  },
+  "effective_network_security": {
+    "inspected": "2026-10-27 post-apply, read-only",
+    "nsg_attachments": "none (0 NSGs on both VM VNICs, the LB, and MySQL) \u2014 created NSGs govern nothing until attached",
+    "governing_rules": "subnet security lists: app=TCP22 from 49.207.205.137/32 only; lb=80/443 public but zero listeners; db=1522/3306 from 10.0.2.0/24 only",
+    "public_8080": "BLOCKED",
+    "public_3306": "BLOCKED",
+    "lb_to_app": "BLOCKED (no listener; no app-SL rule for the LB subnet)",
+    "app_to_mysql": "WORKS (db SL admits 10.0.2.0/24)",
+    "egress": "unrestricted via Internet Gateway route",
+    "note_ssh_drift": "live app security list pins 49.207.205.137/32 while reviewed operator input pins 49.207.214.221/32 \u2014 pre-existing rule, untouched; operator must update the SL or use the (unattached) app NSG at the ingress gate",
+    "nsg_attachment": "NOT required for M1-LOCAL acceptance; separately reviewed update required before enabling API ingress (see security.md)"
+  },
+  "cost_quota_verification": {
+    "verified_read_only": "2 alarms enabled (oci_computeagent / oci_lbaas queries), topic ACTIVE, ONS email subscription PENDING, budget eventforge-monthly (tenancy root \u2192 Test compartment, $5, 3 alert rules), bucket lifecycle 30-day noncurrent DELETE, state CMK ENABLED",
+    "quota": "free E2.1.Micro allocation fully consumed (available=0, used=2 in AD-1) \u2014 no further free micro compute",
+    "not_verifiable_read_only": "actual billed cost (usage API requires a saved-query write; cost-report bucket not accessible) \u2014 Always-Free table is an assessment, not a billing guarantee"
+  },
+  "declarative_reproducibility": {
+    "tracked": "infra/platform/imported_resources.tf (7 blocks / 8 addresses, prevent_destroy, narrow ignores, no NSG attachment)",
+    "values": "git-ignored imported.auto.tfvars (template imported.auto.tfvars.example)",
+    "test": "fresh clone + protected inputs + offline state copy: terraform plan -refresh=false \u2192 No changes (37 no-op, zero creates/updates/destroys)"
+  },
+  "git_revision_at_acceptance": ""
+}

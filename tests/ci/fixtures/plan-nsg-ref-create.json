@@ -1,0 +1,28 @@
+{
+  "resource_changes": [
+    {
+      "address": "oci_core_network_security_group_security_rule.lb_to_app",
+      "type": "oci_core_network_security_group_security_rule",
+      "change": {
+        "actions": ["create"],
+        "after": {
+          "description": "API traffic only from EventForge load balancer",
+          "direction": "INGRESS",
+          "protocol": "6",
+          "source_type": "NETWORK_SECURITY_GROUP",
+          "source": null,
+          "stateless": false,
+          "tcp_options": [{ "destination_port_range": [{ "max": 8080, "min": 8080 }], "source_port_range": [] }]
+        },
+        "after_unknown": {
+          "destination": true,
+          "destination_type": true,
+          "id": true,
+          "network_security_group_id": true,
+          "source": true,
+          "tcp_options": [{ "destination_port_range": [{}], "source_port_range": [] }]
+        }
+      }
+    }
+  ]
+}

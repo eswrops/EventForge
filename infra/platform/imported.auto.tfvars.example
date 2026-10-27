@@ -1,0 +1,40 @@
+# Template for the git-ignored imported.auto.tfvars (matched by *.auto.tfvars).
+# Copy to imported.auto.tfvars and fill every value from the live OCI discovery
+# bundle produced by scripts/local/m1-oci-inventory.sh. The declarations in the
+# tracked imported_resources.tf reference these variables; a clean checkout
+# without this file fails loudly (required variables) instead of silently
+# omitting the eight imported production resources. Live OCIDs and private
+# addresses must never be committed under any name.
+
+imported_shared_route_table_id = "ocid1.routetable.oc1..replace-me"
+
+imported_subnet_security_lists = {
+  app   = ["ocid1.securitylist.oc1..replace-me"]
+  lb    = ["ocid1.securitylist.oc1..replace-me"]
+  mysql = ["ocid1.securitylist.oc1..replace-me"]
+}
+
+imported_mysql_availability_domain = "replace-me:AP-REGION-1-AD-1"
+
+imported_api_instances = {
+  vm1 = {
+    availability_domain = "replace-me:AP-REGION-1-AD-1"
+    fault_domain        = "FAULT-DOMAIN-1"
+    shape               = "replace-me"
+    display_name        = "replace-me"
+    hostname_label      = "replace-me"
+    private_ip          = "10.0.0.0"
+    source_type         = "image"
+    source_id           = "ocid1.image.oc1..replace-me"
+  }
+  vm2 = {
+    availability_domain = "replace-me:AP-REGION-1-AD-1"
+    fault_domain        = "FAULT-DOMAIN-2"
+    shape               = "replace-me"
+    display_name        = "replace-me"
+    hostname_label      = "replace-me"
+    private_ip          = "10.0.0.0"
+    source_type         = "image"
+    source_id           = "ocid1.image.oc1..replace-me"
+  }
+}

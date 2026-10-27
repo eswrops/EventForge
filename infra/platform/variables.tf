@@ -1,6 +1,10 @@
 variable "tenancy_ocid" { type = string }
 variable "compartment_ocid" { type = string }
 variable "region" { type = string }
+# The existing VCN and its subnets live in the tenancy root compartment while
+# compute/MySQL/LB live in the Test compartment (import-safety.md §3); the
+# imported_resources.tf skeletons use this root value for the VCN and subnets.
+variable "vcn_compartment_ocid" { type = string }
 variable "vcn_ocid" { type = string }
 variable "app_subnet_ocid" { type = string }
 variable "lb_subnet_ocid" { type = string }

@@ -9,6 +9,12 @@ fixtures="$repo_root/tests/ci/fixtures"
 "$checker" --policy "$policy" "$fixtures/plan-allowed.json"
 "$checker" --policy "$policy" "$fixtures/plan-noop.json"
 "$checker" --policy "$policy" "$fixtures/plan-allowed-ingress.json"
+# Unknown source on a CREATE is acceptable only when the pinned source_type
+# proves an NSG reference created in the same apply (real-plan regression).
+"$checker" --policy "$policy" "$fixtures/plan-nsg-ref-create.json"
+# Direction-aware handling: an unknown EGRESS destination whose pinned
+# destination_type proves an NSG reference created in the same apply is inert.
+"$checker" --policy "$policy" "$fixtures/plan-nsg-egress-ref-create.json"
 
 for fixture in \
   plan-unapproved.json \
@@ -19,7 +25,10 @@ for fixture in \
   plan-replace-delete-create.json \
   plan-unknown-ingress.json \
   plan-malformed.json \
-  plan-missing-resource-changes.json; do
+  plan-missing-resource-changes.json \
+  plan-nsg-cidr-unknown-create.json \
+  plan-nsg-update-unknown.json \
+  plan-imported-recreate.json; do
   if "$checker" --policy "$policy" "$fixtures/$fixture" >/dev/null 2>&1; then
     echo "Expected $fixture to be rejected." >&2
     exit 1

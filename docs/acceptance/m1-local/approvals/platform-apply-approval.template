@@ -1,0 +1,17 @@
+# TEMPLATE — copy to platform-apply-approval.md and complete ONLY when granting the approval.
+# An executable record must be named platform-apply-approval.md (the apply script's contract).
+
+GATE: PLATFORM-APPLY
+APPROVER: <operator name — must match M1_APPLY_APPROVED_BY exactly>
+DATE: <YYYY-MM-DD>
+COMMIT: <git rev-parse HEAD the plan was generated from>
+PLAN_SHA256: <sha256 of the saved plan — script verifies this exact hash>
+
+Reviewed artifacts:
+- docs/acceptance/m1-local/platform-plan.md (review record)
+- saved plan + JSON + action summary in the run's evidence directory (0600)
+- safe-plan policy result: PASS (not sufficient alone — this review is the authorization)
+
+Statement: I have reviewed the saved plan (creates only; no deletes, replacements, or
+imported-resource updates; enable_api_ingress=false) and authorize this exact plan to be
+applied once with remote locking. A failed apply stops without retry or rollback.

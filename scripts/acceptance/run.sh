@@ -35,12 +35,12 @@ run() {
 }
 
 cd "$repo_root" || exit 1
-run "shell-syntax" "bash parses CI, acceptance, operational, and fixture scripts" \
-  bash -n scripts/ci/*.sh scripts/acceptance/*.sh scripts/oci-free-tier-preflight.sh ops/scripts/* tests/ci/*.sh tests/acceptance/*.sh
+run "shell-syntax" "bash parses CI, acceptance, local, operational, and fixture scripts" \
+  bash -n scripts/ci/*.sh scripts/acceptance/*.sh scripts/local/*.sh scripts/oci-free-tier-preflight.sh ops/scripts/* tests/ci/*.sh tests/acceptance/*.sh tests/local/*.sh
 
 if command -v shellcheck >/dev/null; then
   run "shell-lint" "ShellCheck found no diagnostics" \
-    shellcheck -S warning scripts/ci/*.sh scripts/acceptance/*.sh scripts/oci-free-tier-preflight.sh ops/scripts/* tests/ci/*.sh tests/acceptance/*.sh
+    shellcheck -S warning scripts/ci/*.sh scripts/acceptance/*.sh scripts/local/*.sh scripts/oci-free-tier-preflight.sh ops/scripts/* tests/ci/*.sh tests/acceptance/*.sh tests/local/*.sh
 else
   not_run "shell-lint" "shellcheck is not installed"
 fi
