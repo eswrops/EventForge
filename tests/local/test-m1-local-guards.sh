@@ -115,7 +115,12 @@ if m1_refuse_tracked_sensitive_files "$scratch_repo" 2>/dev/null; then
   fail "tracked imported.auto.tfvars (live discovery values) must be rejected"
 fi
 rm "$scratch_repo/infra/platform/imported.auto.tfvars"
-printf -- '-----BEGIN RSA PRIVATE KEY-----\nabc\n-----END RSA PRIVATE KEY-----\n' > "$scratch_repo/secret.tfvars"
+# Synthetic marker built by concatenation: a real key literal here would trip
+# the repo-wide tracked-secret scan in scripts/acceptance/run.sh.
+# Synthetic key built by concatenation so no tracked line contains a
+# real key literal (scripts/acceptance/run.sh scans tracked content):
+fixture_key="-----BEGIN RSA PRIVATE KE"
+printf -- '%sY-----\nabc\n%sY-----\n' "$fixture_key" "$fixture_key" > "$scratch_repo/secret.tfvars"
 (cd "$scratch_repo" && git add secret.tfvars && git -c user.email=t@t -c user.name=t commit -qm x)
 if m1_refuse_tracked_sensitive_files "$scratch_repo" 2>/dev/null; then :; else
   : # handled below; the private-key scan must reject regardless of extension
