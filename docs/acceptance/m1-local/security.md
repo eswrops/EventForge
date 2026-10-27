@@ -1,71 +1,54 @@
 # M1-LOCAL security verification
 
-Status: **EFFECTIVE network security inspected live 2026-10-27 (post-apply, read-only).**
+Status: **EFFECTIVE network security inspected live 2026-10-28 — post-Scope-A state**
+(the Scope-A NSG associations + security-list corrections were applied and verified under
+written approvals; see [scope-a-network-execution-approval.md](scope-a-network-execution-approval.md)
+§Execution record and §7 of that package for the pre-change union).
 `scripts/local/m1-verify.sh` is the repeatable verification gate; it fails closed (a failed
 OCI listing is never treated as absence) and checks each item below.
 
-## Effective network security — current associations and permitted traffic
+## Effective network security — post-Scope-A associations and permitted traffic
 
-The three platform-created NSGs (`eventforge-{lb,app,db}-nsg`, 19 rules) exist but are
-**attached to nothing**. Every existing component's traffic is therefore governed solely by
-its subnet security list and its own attachment state, verified live per component:
-
-| Component | NSG membership | Governing security list | Effective ingress |
+| Component | NSG membership (live 2026-10-28) | Governing security list | Effective ingress |
 | --- | --- | --- | --- |
-| VM1 `rust-api-test` (10.0.2.129, public 129.225.99.202) | **none** (0 NSGs) | `rust-api-test-ssh-only` (app subnet) | TCP 22 **only** from `49.207.205.137/32`; **nothing else** — 8080 is NOT reachable from anywhere |
-| VM2 `rust-api-worker` (10.0.2.94, public 129.225.99.0) | **none** (0 NSGs) | `rust-api-test-ssh-only` (app subnet) | same as VM1 |
-| LB `rust-api-public-lb` (public 129.159.239.48) | **none** (0 NSGs) | `rust-api-lb-public` (lb subnet) | TCP 80/443 from `0.0.0.0/0` — but the LB has **zero listeners**, so nothing is served |
-| MySQL `rust-api-heatwave` (10.0.3.18, port 3306) | **none** (0 NSGs) | `rust-api-database-private` (db subnet) | TCP 1522/3306 **only** from `10.0.2.0/24` (app subnet); private subnet, no public IP |
+| VM1 `rust-api-test` (10.0.2.129, public 129.225.99.202) | `eventforge-app-nsg` (verified live) | `rust-api-test-ssh-only` (app subnet) | **UNION**: TCP 22 from `49.207.214.221/32` (SL, corrected from the stale `49.207.205.137/32`) ∪ TCP 22 from the reviewed /32 (app NSG) ∪ TCP 8080 from `eventforge-lb-nsg` (app NSG). **Nothing else** — 8080 only from the (listener-less) LB NSG. |
+| VM2 `rust-api-worker` (10.0.2.94, public 129.225.99.0) | `eventforge-app-nsg` (verified live) | `rust-api-test-ssh-only` (app subnet) | same as VM1 |
+| LB `rust-api-public-lb` (public 129.159.239.48) | `eventforge-lb-nsg` (verified live) | `rust-api-lb-public` (lb subnet) — **ingress now `[]`** (both 0.0.0.0/0 80/443 rules removed) | **UNION**: TCP 443 ONLY from the 15 reviewed Cloudflare origin ranges (LB NSG). The legacy unrestricted 80/443 rules are GONE. LB still has **zero listeners**, so nothing is served. |
+| MySQL `rust-api-heatwave` (10.0.3.18, port 3306) | **none** — `nsg_ids = []` (db-NSG attachment **BLOCKED at the service level**, [blockers.md](blockers.md) B5) | `rust-api-database-private` (db subnet) | TCP **3306** from `10.0.2.0/24` (app subnet) — retained as the explicit transitional control; **1522 rule REMOVED** (legacy PostgreSQL-era port). Private subnet, no public IP. |
 
 Route table (shared by all three subnets): single static rule `0.0.0.0/0 → Internet Gateway`
-(egress allowed from all components; no egress restriction anywhere).
+(egress unrestricted; app NSG additionally narrows nothing — union semantics keep the SL's
+all-egress rule in force).
 
-### Answers to the specific exposure questions
+### Verified live post-change (2026-10-28, evidence m1local-scopea-exec-20261027T193848Z)
 
-- **Public ingress to 8080**: NOT possible. The app security list has no 8080 rule at all
-  (only TCP 22 from a single /32), and no NSG is attached to either VNIC.
-- **Public ingress to 3306**: NOT possible. MySQL sits in the private subnet
-  (`prohibit_public_ip_on_vnic = true`, private IP 10.0.3.18 only) and the db security list
-  admits 3306 only from `10.0.2.0/24`.
-- **SSH to port 22**: allowed only from `49.207.205.137/32` per the live app security list.
-  Note: the reviewed operator input pins `operator_ssh_cidr = 49.207.214.221/32` — the
-  operator's current address has changed since the pre-existing security list was written.
-  This is a pre-existing live rule, not touched by M1-LOCAL; SSH access from the current
-  address is likely blocked until the operator updates the rule (or uses a jump path). The
-  created-but-unattached app NSG already pins the reviewed /32.
-- **LB → application**: BLOCKED today. The LB has no listeners, and the app security list
-  admits no traffic from the LB subnet (`10.0.4.0/24`) on any port.
-- **Application → MySQL**: WORKS. The db security list admits `10.0.2.0/24` (the app subnet)
-  to 3306.
-- **Egress**: unrestricted (all-protocol `0.0.0.0/0` egress on every security list, IGW
-  route).
+- Both VM VNICs: exactly 1 attachment each, `nsg_ids = [eventforge-app-nsg]` — no secondary
+  VNIC was created.
+- LB: `network_security_group_ids = [eventforge-lb-nsg]`, listeners `[]`.
+- Security lists: app SL SSH source `49.207.214.221/32`; LB SL ingress `[]` (hash
+  `37517e5f…`); db SL single 3306 rule (hash `57027896…`); app SL hash `75441a3a…`.
+- **Real authenticated SSH** from the approved /32 to BOTH VMs succeeds (via SL and NSG).
+- **MySQL service greeting** (`26.10.0-cloud` on 3306) received from BOTH VMs — app→MySQL
+  path intact after every change (full authenticated login still requires the admin
+  username, which only the operator vault's owner holds — recorded caveat in imports.md §6).
+- Source filtering from a non-Cloudflare vantage: TCP 80 and 443 to 129.159.239.48 refused
+  (SL rule removed; note: with no listener this is corroborating, not conclusive — the
+  conclusive filter test repeats at scope B when a listener exists).
+- `m1-verify.sh` **18 PASS / 0 FAIL** post-apply and post-SL-corrections; state lineage
+  `cdda242b-92c1-4371-5b43-495f3849fc4d` unchanged (serial 12 after the apply); drift clean.
 
-## NSG attachment status and the required operations
+### Remaining exposures / notes
 
-The created NSGs are the **intended final** per-tier policy (443 only from the 15 reviewed
-Cloudflare origin ranges; 8080 only LB-NSG→app-NSG; 22 only the reviewed operator /32; 3306
-only app-NSG↔db-NSG). Attaching them is **not required for M1-LOCAL security acceptance** —
-the effective posture above is already closed to public API/DB traffic — and is deliberately
-**not applied** by this mission.
-
-The attachment becomes necessary only at the future ingress-enablement gate (an LB listener
-needs the app backends to accept 8080, and 443 needs Cloudflare-origin restriction). That
-gate requires a separately reviewed NSG-ATTACHMENT change; the required OCI operations are:
-
-1. Update each `oci_core_instance.api["vm1"/"vm2"]`: add `eventforge-app-nsg` to the primary
-   VNIC `nsg_ids` (existing-resource update; no replacement; VNIC keeps its public IP).
-2. Update `oci_load_balancer_load_balancer.existing`: add `eventforge-lb-nsg` to
-   `network_security_group_ids` (in-place update).
-3. Update `oci_mysql_mysql_db_system.existing`: set `nsg_ids = [eventforge-db-nsg]`
-   (in-place db-system update).
-4. Only then: LB listener/backends/certificate + DNS (the `enable_api_ingress` gate).
-
-Connectivity impact of that future change: VMs gain 8080 from the LB NSG and SSH from the
-reviewed /32 (current effective SSH source stays whatever the app security list pins — the
-union of security-list and NSG rules applies); MySQL gains 3306 from the app NSG; the LB
-gains 443 from Cloudflare ranges. No existing allow-rule is removed, so no current flow can
-break. All three `eventforge-*` NSGs and their 19 rules must be preserved verbatim by that
-update (safe-plan `protected_imports`/allowlist and the verify gate enforce it).
+- **MySQL DB-NSG gap (B5)**: the intended app-NSG↔db-NSG pairing is half-built — the app NSG
+  carries the 3306 egress rule to the db NSG, but the db system cannot join the db NSG
+  (service refuses). The db SL's subnet-wide 3306 rule remains the operative control;
+  tightening it requires B5 resolution first.
+- **SSH**: SL-level SSH now equals the reviewed /32; the legacy `.137` rule is gone.
+  SSH from other addresses was not tested from a second vantage (single-VPS test recommended
+  at next opportunity).
+- **LB → application**: still blocked (no listener; and 8080 only permitted LB-NSG→app-NSG,
+  which is now attached on both sides).
+- **Egress**: unrestricted (SL) — unchanged.
 
 ## Verified controls (read-only, unchanged from the pre-apply record)
 

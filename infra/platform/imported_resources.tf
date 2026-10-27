@@ -153,9 +153,12 @@ resource "oci_mysql_mysql_db_system" "existing" {
   shape_name          = "MySQL.Free"
   availability_domain = var.imported_mysql_availability_domain
   subnet_id           = var.mysql_subnet_ocid
-  # Scope-A reviewed attachment (append-only): db system joins
-  # eventforge-db-nsg (top-level attribute in this provider version).
-  nsg_ids        = [oci_core_network_security_group.db.id]
+  # DB-NSG attachment (Scope-A) is BLOCKED at the service level for this DB
+  # system (2026-10-28): the provider's UpdateDbSystem silently ignored
+  # nsg_ids, and the direct CLI UPDATE_DBSYSTEM work request FAILED — see
+  # blockers.md B5. The db security list (3306 from the app subnet) remains
+  # the governing control; re-add nsg_ids = [oci_core_network_security_group.db.id]
+  # once the service supports NSG updates on this system.
   admin_username = var.mysql_admin_username
   admin_password = var.mysql_admin_password
   backup_policy {
