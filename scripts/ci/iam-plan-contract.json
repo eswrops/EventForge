@@ -1,0 +1,22 @@
+{
+  "resources": [
+    {
+      "address": "oci_identity_policy.mysql_nsg_membership",
+      "type": "oci_identity_policy",
+      "name": "eventforge-mysql-nsg-membership",
+      "compartment": "${db_compartment_ocid}",
+      "statements": [
+        "Allow any-user to {NETWORK_SECURITY_GROUP_UPDATE_MEMBERS} in compartment id ${db_compartment_ocid} where all {request.principal.type='mysqldbsystem', request.resource.compartment.id='${db_compartment_ocid}'}"
+      ]
+    },
+    {
+      "address": "oci_identity_policy.mysql_vnic_update",
+      "type": "oci_identity_policy",
+      "name": "eventforge-mysql-vnic-update",
+      "compartment": "${tenancy_ocid}",
+      "statements": [
+        "Allow any-user to {VNIC_CREATE, VNIC_UPDATE, VNIC_ASSOCIATE_NETWORK_SECURITY_GROUP, VNIC_DISASSOCIATE_NETWORK_SECURITY_GROUP} in compartment id ${tenancy_ocid} where all {request.principal.type='mysqldbsystem', request.resource.compartment.id='${db_compartment_ocid}'}"
+      ]
+    }
+  ]
+}

@@ -132,11 +132,14 @@ policies:
   where all {request.principal.type='mysqldbsystem',
   request.resource.compartment.id='<Test>'}`
 
-Saved plan (commit to be pinned at approval time): **2 to add, 0 to change,
-0 to destroy**; plan SHA-256
-`d0e1afe65f3cda5e09f45adb4fa93898647ecf686d4878ea53108a864db7c9f2`
-(`tfplan.bin`, generated 2026-10-28 at the working tree of `70bc482` + the
-new `infra/iam/` root). The dynamic-group alternative was assessed and rejected
+Saved plan: **2 to add, 0 to change, 0 to destroy**, regenerated at the
+merged revision carrying the execution-safety contracts (see §7; the
+historical 2026-10-28 plan at working tree `70bc482` + new `infra/iam/` had
+SHA-256 `d0e1afe65f3cda5e09f45adb4fa93898647ecf686d4878ea53108a864db7c9f2`
+and is superseded — the approval binds the plan generated at the pinned
+merged commit via the guarded `m1-iam-plan.sh` flow). Both policy resources
+now carry `lifecycle { prevent_destroy = true }`. The dynamic-group
+alternative was assessed and rejected
 (see `infra/iam/main.tf` header comment): the any-user+conditions form is
 Oracle-documented verbatim for this exact scenario and is equally binding —
 it admits only `mysqldbsystem` principals of DB systems in the Test compartment,
@@ -149,9 +152,74 @@ remain disabled and untouched.
 ## 6. Retest package (Phase 4) — requires MYSQL-NSG-RETEST approval
 
 A separate one-attempt retest procedure, including the SUCCEEDED verification
-and connectivity re-checks, is in
-[mysql-nsg-retest-approval.md](mysql-nsg-retest-approval.md). The db security
-list's subnet-wide 3306 rule is NOT touched by the retest; removing it is a
-[approvals/mysql-nsg-retest-approval.template](approvals/mysql-nsg-retest-approval.template).
+and connectivity re-checks, is bound by the
+[MYSQL-NSG-RETEST approval template](approvals/mysql-nsg-retest-approval.template);
+its plan is guarded by the dedicated attribute-level policy
+`scripts/ci/platform-safe-plan-mysql-retest-policy.json` (exactly
+`oci_mysql_mysql_db_system.existing`, update, `nsg_ids` only, `[]` →
+`eventforge-db-nsg`; fixtures in `tests/ci/test-safe-plan-mysql-retest.sh`).
 The db security list's subnet-wide 3306 rule is NOT touched by the retest;
 removing it is a later, separately reviewed network-security change.
+
+## 7. Execution-safety contracts (2026-10-28, prepared — nothing applied)
+
+**The IAM package is PREPARED, NOT APPLIED.** As of this revision no
+`eventforge-mysql-*` policy exists in the tenancy (verified read-only) and the
+`iam/terraform.tfstate` key has never held state. Execution requires the
+written MYSQL-NSG-IAM approval and is tool-guarded end to end:
+`scripts/local/m1-iam-{init,plan,apply}.sh` (pinned Terraform 1.12.2, APIKey
+profile `DEFAULT`, exact backend coordinates, default workspace, locking
+retained, no migration/recovery/auto-approve/retry, evidence outside the
+repository) with the exact two-policy contract checker
+`scripts/ci/assert-iam-plan.sh` + `scripts/ci/iam-plan-contract.json`.
+
+- **The `AuthorizationFailed` error code strongly supports the
+  missing-permission diagnosis**: the accepting `UpdateDbSystem` API calls
+  returned 204 to the fully authorized operator principal, and both failures
+  happened inside the service-side work request — the classic signature of the
+  service's resource principal lacking policies. It is not, by itself, a
+  cryptographic proof (a transitory service-side authorization regression
+  would look similar), which is why the corrective policies remain gated on
+  operator approval rather than auto-executed.
+- **The MySQL retry remains independently gated.** MYSQL-NSG-IAM execution
+  does NOT authorize the retest: [MYSQL-NSG-RETEST](approvals/mysql-nsg-retest-approval.template)
+  is a separate approval with its own preconditions and exactly one attempt.
+- **A successful IAM apply does not by itself make B5 PASS.** B5 moves to
+  resolved only when the separately approved retest shows the new
+  `UPDATE_DBSYSTEM` work request SUCCEEDED, `nsg_ids` containing
+  `eventforge-db-nsg`, and connectivity intact from both VMs. Until then B5
+  stands (DB system ACTIVE, `nsg_ids = []`, effective posture governed by the
+  db security list).
+- **IAM policy propagation may need verification before the retry.** Newly
+  created policies are usually effective within seconds but Oracle documents
+  no strict propagation bound; the retest preconditions already require
+  reading both policies back (`oci iam policy get`) with statements exactly
+  as reviewed — if the read-back or an execution-time validation fails,
+  STOP and re-approve; the one retest attempt is not to be spent on a
+  possibly-unpropagated grant.
+
+## 8. Tenancy-root policy location — question and determination
+
+**Question.** Statement 2 attaches at the tenancy root using
+`in compartment id <tenancy-OCID>`. Oracle's policy-syntax documentation
+(Identity/Concepts/policysyntax.htm) defines the location grammar as
+`[ tenancy | compartment <name> | compartment id <ocid> ]` but never states
+whether the `compartment id` form accepts the tenancy OCID (the root
+compartment's OCID equals the tenancy OCID, but no Oracle policy-syntax page
+visited on 2026-10-28 confirms the `compartment id` form accepts it; the
+documented root-scoped form is the `in tenancy` keyword, which would broaden
+scope to all child compartments).
+
+**Determination.** The `compartment id` form is kept UNCHANGED — it is the
+narrowest reading of Oracle's documented MySQL statements (`in compartment
+<subnet_compartment_name>` with the subnet compartment = root), keeps the
+grant pinned to exactly one compartment by unambiguous OCID, and is
+standard OCI behavior in practice (the root compartment's OCID is the
+tenancy OCID). **Broadening to `in tenancy` is explicitly NOT authorized
+without a new approval.** Residual risk, recorded: if the policy-create API
+rejects `in compartment id <tenancy-OCID>` at execution time, the MYSQL-NSG-IAM
+stop conditions apply (STOP, preserve logs, no fallback location), and the
+fallback (`in tenancy` + the same `where all {...}` constraints, or an
+explicitly documented alternative from Oracle support) requires a fresh
+reviewed plan and approval. This is an execution-time service-validation
+risk, not a reviewed-contract change.
