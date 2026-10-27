@@ -20,13 +20,15 @@ before running anything and transcribes the merge commit into the §12 record.
 - Safety patch 1: the focused PR that introduced the object-absence,
   copy-race, and precondition hardening (squash-merged into `main` through
   branch protection).
-- Contract fix 1: the focused PR that corrected the three OCI CLI response
-  contracts — namespace envelope parsing, object-version listing envelope
-  parsing with required successful `--all` pagination, and KMS key lookup
-  through the vault's actual management endpoint (see §8) — with the offline
-  fixtures rewritten to the live-verified envelopes.
-- Merge commit: `CONTRACT_FIX_MERGE_SHA` — replaced by a docs-only stamp
-  commit immediately after the merge (the `938ff89` → `486ed6f` precedent).
+- Contract fix 1: PR #26 (squash-merged as
+  `2e2380a33b18515ad0a52e24d027d58702b06fac`) — the focused PR that corrected
+  the three OCI CLI response contracts — namespace envelope parsing,
+  object-version listing envelope parsing with required successful `--all`
+  pagination, and KMS key lookup through the vault's actual management
+  endpoint (see §8) — with the offline fixtures rewritten to the live-verified
+  envelopes.
+- Merge commit: `2e2380a33b18515ad0a52e24d027d58702b06fac`
+  (verify: `git log --format='%H %s' -1 2e2380a`)
 - Content hashes (sha256), verified before execution:
 
 | File | sha256 |

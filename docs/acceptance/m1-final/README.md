@@ -15,7 +15,7 @@ records) are preserved unmodified as historical snapshots.
 | [release-operations.md](release-operations.md) | Phase 8 evidence — exit gate **RELEASE-OPERATIONS = PREPARED** |
 | [remote-state.md](remote-state.md) | Phase 4 — state-identity root-cause verification for the executed bootstrap migration (lineage/serial reset), offline reproduction, regression tests, preserved ACCEPT_TRANSITION decision |
 | [terraform-upstream-issue.md](terraform-upstream-issue.md) | Sanitized upstream Terraform issue draft (migration metadata reset) |
-| [live-backend-validation-approval.md](live-backend-validation-approval.md) | Hardened (NOT executed) authorization package for live STATE-LOCKING, STATE-CONTENTION, and STATE-RECOVERY validation on RUN_ID-confined disposable keys; IAM-DENIAL deferred to the federation phase. Merged as `a4e0904`, safety-patched as `938ff89` |
+| [live-backend-validation-approval.md](live-backend-validation-approval.md) | Hardened (NOT executed) authorization package for live STATE-LOCKING, STATE-CONTENTION, and STATE-RECOVERY validation on RUN_ID-confined disposable keys; IAM-DENIAL deferred to the federation phase. Merged as `a4e0904`, safety-patched as `938ff89`, OCI CLI response contracts fixed as `2e2380a` |
 | remaining Phase 9 files | written as their phases execute (architecture, github-security, oci-bootstrap, workload-federation, imports, network-security, monitoring, cost-and-free-tier, acceptance-checklist, blockers, m1-final-report.json) |
 
 ## Gate status
