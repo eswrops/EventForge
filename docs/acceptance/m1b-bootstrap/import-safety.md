@@ -24,7 +24,7 @@ roots (bootstrap owns no network/compute resources; frontend owns only Cloudflar
 
 | Component | Classification | Protection |
 | --- | --- | --- |
-| VCN, 3 subnets | Will become **managed** (import flow only) via the commented skeletons in `imported_resources.tf.example` | `prevent_destroy = true` in each skeleton; shared route/security references pinned to discovered OCIDs |
+| VCN, 3 subnets | Will become **managed** (import flow only) via the tracked declarations in `imported_resources.tf` (values in the ignored `imported.auto.tfvars`) | `prevent_destroy = true` in each skeleton; shared route/security references pinned to discovered OCIDs |
 | The 2 instances | Managed (template, complete) | `prevent_destroy`, `ignore_changes = [metadata, agent_config, availability_config]`, existing NSG ids preserved and appended |
 | MySQL DB system | Will become managed | `prevent_destroy` skeleton |
 | Load balancer | Will become managed | `prevent_destroy` skeleton |

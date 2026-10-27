@@ -320,7 +320,7 @@ else
     if [[ "$mode" == "pre-import" ]]; then
       import_file="$repo_root/infra/platform/imported_resources.tf"
       if [[ ! -f "$import_file" ]]; then
-        record "oci-import-scope" BLOCKED "infra/platform/imported_resources.tf does not exist yet; create it from imported_resources.tf.example during the approved import flow"
+        record "oci-import-scope" BLOCKED "infra/platform/imported_resources.tf does not exist yet; the tracked declarations must be present with values in imported.auto.tfvars (see imported.auto.tfvars.example)"
       else
         declared="$(grep -hE '^resource "[^"]+" "[^"]+"' "$import_file" | sed -E 's/resource "([^"]+)" "([^"]+)".*/\1.\2/' | sort -u)"
         allowed='^(oci_core_vcn\.existing|oci_core_subnet\.(app|lb|mysql)|oci_core_instance\.api|oci_mysql_mysql_db_system\.existing|oci_load_balancer_load_balancer\.existing)$'
@@ -375,19 +375,24 @@ else
   record "ingress-disabled" FAIL "public API ingress is not demonstrably false-by-default"
 fi
 
-unmanaged_shared_network="$(grep -hE '^resource "(oci_core_vcn|oci_core_subnet|oci_core_security_list|oci_core_route_table)"' \
+# Security lists, route tables, and gateways are never declared (shared
+# components stay read-only); the VCN and subnets are exactly the reviewed
+# imported declarations, which must stay inside imported_resources.tf.
+unmanaged_shared_network="$(grep -hE '^resource "(oci_core_security_list|oci_core_route_table|oci_core_internet_gateway|oci_core_dhcp_options|oci_core_nat_gateway)"' \
   "$repo_root"/infra/platform/*.tf 2>/dev/null | awk '{print $2}' | sort -u | tr '\n' ' ')"
-if [[ -z "${unmanaged_shared_network// }" ]]; then
-  record "shared-network-unmanaged" PASS "platform declares no managed VCN, subnet, security-list, or route-table resources (shared components stay read-only until the reviewed import flow)"
+imported_network_decls="$(grep -hcE '^resource "oci_core_(vcn|subnet)"' "$repo_root"/infra/platform/imported_resources.tf 2>/dev/null || echo 0)"
+if [[ -z "${unmanaged_shared_network// }" && "$imported_network_decls" -eq 4 ]]; then
+  record "shared-network-unmanaged" PASS "security lists/route tables/gateways undeclared; VCN + 3 subnets declared only as the protected imports (prevent_destroy enforced by oci-import-scope)"
 else
-  record "shared-network-unmanaged" FAIL "platform manages shared network resources outside the import flow: ${unmanaged_shared_network}"
+  record "shared-network-unmanaged" FAIL "shared network drift: undeclared-managed [${unmanaged_shared_network// /, }], imported VCN/subnet declarations=$imported_network_decls (expected 4)"
 fi
 
-if grep -q 'prevent_destroy' "$repo_root"/infra/platform/imported_resources.tf.example && \
+if grep -q 'prevent_destroy' "$repo_root"/infra/platform/imported_resources.tf && \
+   grep -qE '^resource ' "$repo_root"/infra/platform/imported_resources.tf && \
    jq -e '.protected_imports | length > 0' "$repo_root"/scripts/ci/platform-safe-plan-policy.json >/dev/null 2>&1; then
-  record "imported-protection" PASS "import template carries prevent_destroy and the safe-plan policy protects all mapped imports"
+  record "imported-protection" PASS "tracked imported declarations carry prevent_destroy and the safe-plan policy protects all mapped imports"
 else
-  record "imported-protection" FAIL "import protections are missing from the template or policy"
+  record "imported-protection" FAIL "import protections are missing from the tracked declarations or policy"
 fi
 
 if git -C "$repo_root" ls-files | grep -qE '\.(pem|key|p12|tfstate|tfplan)$|(^|/)(backend\.hcl|[^/]*\.auto\.tfvars)$'; then
