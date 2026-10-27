@@ -13,10 +13,15 @@ fail() { echo "TEST FAIL: $1" >&2; exit 1; }
 
 # Operator-local backend coordinates the lib expects on disk (git-ignored in
 # a real checkout; synthesized here for CI).
+env_value() { # env_value <name> — evaluate scripts/local/m1-local.env defaults
+  (
+    source "$repo_root/scripts/local/m1-local.env" >/dev/null 2>&1
+    eval "$(printf 'printf %%s "${%s}"' "$1")"
+  )
+}
 if [[ ! -f "$repo_root/infra/platform/backend.hcl" ]]; then
-  # shellcheck source=scripts/local/m1-local.env
-  bucket="$(grep '^M1_TF_STATE_BUCKET=' "$repo_root/scripts/local/m1-local.env" | cut -d= -f2 | tr -d '"')"
-  namespace="$(grep '^M1_OCI_NAMESPACE=' "$repo_root/scripts/local/m1-local.env" | cut -d= -f2 | tr -d '"')"
+  bucket="$(env_value M1_TF_STATE_BUCKET)"
+  namespace="$(env_value M1_OCI_NAMESPACE)"
   printf '# test backend coordinates\nbucket    = "%s"\nnamespace = "%s"\nkey       = "platform/terraform.tfstate"\nregion    = "ap-hyderabad-1"\nauth      = "APIKey"\nconfig_file_profile = "DEFAULT"\n' \
     "$bucket" "$namespace" > "$repo_root/infra/platform/backend.hcl"
   cleanup_backend=1
@@ -54,7 +59,7 @@ chmod +x "$stub_bin/terraform"
 
 # stub state + kms key come from the pinned env file so the stub matches the
 # library's expectations without hardcoding operator coordinates here.
-KMS_KEY="$(grep '^M1_EXPECTED_KMS_KEY_ID=' "$repo_root/scripts/local/m1-local.env" | cut -d= -f2 | tr -d '"')"
+KMS_KEY="$(env_value M1_EXPECTED_KMS_KEY_ID)"
 export KMS_KEY
 
 # oci stub: healthy bucket/CMK, no lock objects, platform key present.
