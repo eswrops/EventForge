@@ -1,0 +1,65 @@
+{
+  "schema_version": 1,
+  "phase": "M1B.2B — GitHub security lockdown applied",
+  "applied_at": "2026-10-27T04:49:00Z",
+  "authorization": "Operator instruction 'do it' (2026-10-27) in direct response to the M1B.2B final report listing exactly these two pending changes; recorded in operator-checklist.md step 6.",
+  "applied_changes": [
+    {
+      "change": "Branch protection on main",
+      "live_values": {
+        "required_status_checks": {
+          "strict": true,
+          "contexts": [
+            "Format and validate (infra/bootstrap)",
+            "Format and validate (infra/platform)",
+            "Format and validate (infra/frontend)",
+            "CI script and workflow checks"
+          ]
+        },
+        "enforce_admins": true,
+        "required_approving_review_count": 0,
+        "dismiss_stale_reviews": true,
+        "require_last_push_approval": false,
+        "allow_force_pushes": false,
+        "allow_deletions": false,
+        "required_linear_history": true
+      },
+      "rollback": "gh api -X DELETE repos/eswrops/EventForge/branches/main/protection"
+    },
+    {
+      "change": "Strict Actions restrictions",
+      "live_values": {
+        "allowed_actions": "selected",
+        "sha_pinning_required": true,
+        "github_owned_allowed": false,
+        "verified_allowed": false,
+        "patterns_allowed": [
+          "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+          "actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff",
+          "hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd",
+          "dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec"
+        ]
+      },
+      "note": "No blanket verified-creator access. sha_pinning_required IS settable at repository level via REST (the earlier caveat was wrong); it also accepts all four existing workflow pins.",
+      "rollback": "gh api -X PUT repos/eswrops/EventForge/actions/permissions -F enabled=true -f allowed_actions=all -F sha_pinning_required=false"
+    }
+  ],
+  "rest_of_settings_unchanged": {
+    "default_workflow_permissions": "read",
+    "can_approve_pull_request_reviews": false,
+    "environments": "production-plan (25412942570), production (25412943777) with reviewer 237514587, prevent_self_review=false, main-only branch policies"
+  },
+  "verification": {
+    "preflight_mode": "pre-bootstrap",
+    "summary": { "pass": 18, "fail": 0, "not_run": 1, "blocked": 3 },
+    "gh_branch_protection_main": "PASS",
+    "gh_actions_pinning": "PASS",
+    "gh_actions_allowlist": "PASS",
+    "remaining_blocked": [
+      "tf-version (local default terraform is 1.17.0; CI-pinned 1.12.2 required for the bootstrap apply)",
+      "operator-inputs-bootstrap (terraform.auto.tfvars is operator-held)",
+      "oci-cmk (key/compartment decision pending operator step 7)"
+    ],
+    "sole_maintainer_merge_path": "This evidence change is itself the live test: a PR under the new protection, all four required checks mandatory, merged with zero required approvals by the sole maintainer."
+  }
+}

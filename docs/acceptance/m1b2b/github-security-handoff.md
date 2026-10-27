@@ -1,8 +1,12 @@
-# M1B.2B — Operator handoff: GitHub security lockdown (read-only review)
+# M1B.2B — Operator handoff: GitHub security lockdown
 
 Generated: 2026-10-27 · Corrective PR #8 merged as `08defba8bfee8ee5a37d15f685e67308bcbc9a24`
-· **Nothing in this document has been applied to GitHub.** Branch protection and Actions
-permissions require the operator's separate recorded approval (checklist step 6).
+· **STATUS UPDATE (2026-10-27, operator instruction "do it"): the two changes below have been
+APPLIED and verified live — final values and rollback commands are in
+[lockdown-applied.json](lockdown-applied.json); preflight 18 PASS / 0 FAIL with
+`gh-branch-protection-main`, `gh-actions-pinning`, `gh-actions-allowlist` all PASS.** This
+document is retained as the pre-change review record; §1's snapshot below describes the
+*pre-change* state used for rollback.
 
 ## 1. Live settings snapshot for rollback (captured 2026-10-27, before any change)
 

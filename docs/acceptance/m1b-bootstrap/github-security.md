@@ -188,14 +188,19 @@ workflow (verified in run 40418147090).
 ## 6. GitHub Actions hardening — desired state ⛔
 
 ```bash
-# Restrict Actions to the reviewed, SHA-pinned allowlist. Deliberately strict:
-# github_owned_allowed and verified_allowed are BOTH false — blanket
-# verified-creator access is not enabled — so only the four pinned
-# owner/repo@SHA entries below can run. The authoritative list is
+# Restrict Actions to the reviewed, SHA-pinned allowlist and enforce full-SHA
+# pinning. Deliberately strict: github_owned_allowed and verified_allowed are
+# BOTH false — blanket verified-creator access is not enabled — so only the
+# four pinned owner/repo@SHA entries below can run. The authoritative list is
 # scripts/ci/action-allowlist.json; every workflow reference is checked
 # against it by tests/ci/test-required-checks.sh.
+# gh api gotcha: -f sends literal strings; the boolean fields need -F, and
+# allowed_actions must be switched to selected BEFORE setting the patterns
+# (the patterns PUT conflicts while all actions are allowed).
 gh api -X PUT repos/eswrops/EventForge/actions/permissions \
-  -f enabled=true -f allowed_actions=selected
+  -F enabled=true \
+  -f allowed_actions=selected \
+  -F sha_pinning_required=true
 gh api -X PUT repos/eswrops/EventForge/actions/permissions/selected-actions \
   -F github_owned_allowed=false \
   -F verified_allowed=false \
@@ -209,6 +214,11 @@ gh api -X PUT repos/eswrops/EventForge/actions/permissions/workflow \
   -f default_workflow_permissions=read \
   -F can_approve_pull_request_reviews=false
 ```
+
+Applied live on 2026-10-27 with the operator's approval — final state recorded in
+[lockdown-applied.json](../m1b2b/lockdown-applied.json), including that
+`sha_pinning_required` **is** settable at repository level via REST (an earlier note here
+doubted it) and that GitHub accepts all four existing pins under enforcement.
 
 All four pinned SHAs were verified against their source repositories during
 M1B.2B: `actions/checkout@11d5960…` = tag `v4.4.0`, `actions/setup-go@40f1582…`
