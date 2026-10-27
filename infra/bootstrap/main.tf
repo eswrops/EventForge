@@ -12,6 +12,10 @@ resource "oci_objectstorage_bucket" "terraform_state" {
   kms_key_id     = var.state_bucket_kms_key_id
 
   object_events_enabled = false
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "oci_objectstorage_bucket" "backups" {
@@ -23,6 +27,10 @@ resource "oci_objectstorage_bucket" "backups" {
   versioning     = "Enabled"
 
   object_events_enabled = false
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 # Terraform state contains sensitive values. Keep versioning enabled for
@@ -68,6 +76,10 @@ resource "oci_identity_policy" "objectstorage_kms" {
     "Allow service objectstorage-${var.region} to use keys in ${local.kms_policy_location} where target.key.id = '${var.state_bucket_kms_key_id}'",
     "Allow service objectstorage-${var.region} to manage object-family in compartment id ${var.compartment_ocid} where target.bucket.name = '${var.state_bucket_name}'",
   ]
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "oci_identity_dynamic_group" "eventforge_instances" {
