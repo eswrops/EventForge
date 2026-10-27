@@ -1,0 +1,17 @@
+{
+  "resource_changes": [
+    {
+      "address": "oci_core_vcn.existing",
+      "type": "oci_core_vcn",
+      "change": {
+        "actions": ["create"],
+        "after": {
+          "cidr_blocks": ["10.0.0.0/16"],
+          "compartment_id": "ocid1.compartment.oc1..recreated-from-a-checkout-missing-the-import-declaration",
+          "display_name": "postgresmax-vcn"
+        },
+        "after_unknown": { "default_security_list_id": true, "default_route_table_id": true, "id": true }
+      }
+    }
+  ]
+}

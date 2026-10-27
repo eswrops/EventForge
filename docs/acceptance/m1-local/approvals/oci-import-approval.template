@@ -1,0 +1,27 @@
+# TEMPLATE — copy to oci-import-approval.md and complete ONLY when granting the approval.
+# An executable record must be named oci-import-approval.md (the import script's contract).
+
+GATE: OCI-IMPORT
+APPROVER: <operator name — must match M1_IMPORT_APPROVED_BY exactly>
+DATE: <YYYY-MM-DD>
+COMMIT: <git rev-parse HEAD at review time — script verifies this exact SHA>
+
+Reviewed artifacts:
+- docs/acceptance/m1-local/imports.md (inventory reconciliation 16/0, generated configuration)
+- infra/platform/imported_resources.tf (validated; prevent_destroy on all eight; no NSG attachments)
+- /Users/eswr/secure/evidence/m1local-*/oci-inventory.json (discovery bundle)
+
+Approved import list (all eight, in this order):
+- oci_core_vcn.existing
+- oci_core_subnet.app
+- oci_core_subnet.lb
+- oci_core_subnet.mysql
+- oci_core_instance.api["vm1"]
+- oci_core_instance.api["vm2"]
+- oci_mysql_mysql_db_system.existing
+- oci_load_balancer_load_balancer.existing
+
+Statement: I have reviewed the eight-address import list and the generated configuration
+against the live OCI discovery evidence and approve importing these addresses into
+platform/terraform.tfstate on this commit. Imports change only Terraform state. Any failure
+stops without retry.

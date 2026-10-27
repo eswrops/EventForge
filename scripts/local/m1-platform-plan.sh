@@ -36,6 +36,20 @@ m1_verify_locking_retained "$@" \
 m1_verify_no_recovery_invocation "$@" \
   && m1_check PASS "no-state-recovery" "none" \
   || fail_gate no-state-recovery "recovery invocation refused"
+
+# M1-LOCAL never enables API ingress. Refuse any input file or TF_VAR that
+# sets enable_api_ingress=true before touching live coordinates; the plan
+# scan below additionally rejects any plan that proposes ingress resources.
+ingress_inputs=""
+for f in "$root/terraform.auto.tfvars" "$root/imported.auto.tfvars" "$root/terraform.tfvars" "$root"/*.tfvars.local; do
+  [[ -f "$f" ]] || continue
+  grep -Eq '^[[:space:]]*enable_api_ingress[[:space:]]*=[[:space:]]*true' "$f" && ingress_inputs+="$(basename "$f") "
+done
+if [[ -n "$ingress_inputs" || "${TF_VAR_enable_api_ingress:-}" == true ]]; then
+  fail_gate api-ingress-disabled \
+    "enable_api_ingress=true is refused by M1-LOCAL scripts (inputs: ${ingress_inputs:-TF_VAR_enable_api_ingress}); ingress enablement is a separately reviewed future gate"
+fi
+m1_check PASS "api-ingress-disabled" "enable_api_ingress=false in all consumed inputs"
 m1_verify_bucket_preconditions \
   && m1_check PASS "state-bucket" "private/versioned/CMK-bound" \
   || fail_gate state-bucket "preconditions failed"
@@ -115,6 +129,19 @@ fi
 
 import_updates="$(grep -c . "$M1_EVIDENCE_DIR/plans/platform-$stamp.import-updates.txt" || true)"
 m1_check PASS "import-updates-listed" "$import_updates proposed existing-resource update(s) recorded"
+
+# Defense in depth: even if an input slipped past the input guard above, a
+# plan proposing API-ingress resources is refused — this track never deploys
+# listeners, backends, certificates, or DNS records.
+ingress_creates="$(jq -r '
+  [.resource_changes[]?
+   | select(.change.actions | index("create"))
+   | .address
+   | select(test("^(oci_load_balancer_(listener|backend_set|backend|certificate)|cloudflare_dns_record|cloudflare_ruleset|tls_private_key|tls_cert_request|cloudflare_origin_ca_certificate)"))]
+  | join(",")' "$plan_json")"
+[[ -z "$ingress_creates" ]] \
+  && m1_check PASS "no-ingress-creates" "plan proposes no API-ingress resources" \
+  || fail_gate no-ingress-creates "API-ingress resources refused by M1-LOCAL: $ingress_creates"
 
 # Metadata (the reviewed contract consumed by m1-platform-apply.sh) -------------
 changes_total="$(grep -c . "$M1_EVIDENCE_DIR/plans/platform-$stamp.actions.txt" || true)"

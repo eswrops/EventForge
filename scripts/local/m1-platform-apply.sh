@@ -37,28 +37,9 @@ backend_hcl="$root/backend.hcl"
 
 fail_gate() { m1_check FAIL "$1" "${*:2}"; m1_evidence_record "GATE FAIL: $1"; m1_exit_gate_failed; }
 
-# Guards ------------------------------------------------------------------
-m1_verify_terraform_bin \
-  && m1_check PASS "terraform-pinned" "v$M1_TERRAFORM_VERSION" \
-  || fail_gate terraform-pinned "wrong binary"
-m1_verify_auth_mode \
-  && m1_check PASS "auth-apikey-profile" "profile $M1_OCI_PROFILE" \
-  || fail_gate auth-apikey-profile "invalid authentication"
-m1_verify_locking_retained "$@" \
-  && m1_check PASS "locking-retained" "locking retained" \
-  || fail_gate locking-retained "lock disabling refused"
-m1_verify_no_recovery_invocation "$@" \
-  && m1_check PASS "no-state-recovery" "none" \
-  || fail_gate no-state-recovery "recovery invocation refused"
-m1_verify_bucket_preconditions \
-  && m1_check PASS "state-bucket" "private/versioned/CMK-bound" \
-  || fail_gate state-bucket "preconditions failed"
-m1_verify_cmk_enabled \
-  && m1_check PASS "cmk-enabled" "ENABLED" \
-  || fail_gate cmk-enabled "CMK not ENABLED"
-m1_verify_backend_config "$backend_hcl" "$M1_PLATFORM_KEY" \
-  && m1_check PASS "backend-config" "coordinates approved" \
-  || fail_gate backend-config "unexpected backend coordinates"
+# Offline contract checks run FIRST: the plan/metadata/approval triangle is
+# verified before any live OCI access, so a replayed, tampered, or unapproved
+# artifact never touches the account and the contract is testable offline.
 [[ -f "$plan_file" && -f "$metadata_file" ]] \
   && m1_check PASS "artifacts-present" "$(basename "$plan_file") + metadata" \
   || fail_gate artifacts-present "plan or metadata missing"
@@ -102,6 +83,29 @@ else
     "invalid or missing approval record ($approval_record): it must contain 'GATE: PLATFORM-APPLY', the plan SHA-256 $plan_sha, commit $commit, and an APPROVER: line"
 fi
 
+# Live guards -----------------------------------------------------------------
+m1_verify_terraform_bin \
+  && m1_check PASS "terraform-pinned" "v$M1_TERRAFORM_VERSION" \
+  || fail_gate terraform-pinned "wrong binary"
+m1_verify_auth_mode \
+  && m1_check PASS "auth-apikey-profile" "profile $M1_OCI_PROFILE" \
+  || fail_gate auth-apikey-profile "invalid authentication"
+m1_verify_locking_retained "$@" \
+  && m1_check PASS "locking-retained" "locking retained" \
+  || fail_gate locking-retained "lock disabling refused"
+m1_verify_no_recovery_invocation "$@" \
+  && m1_check PASS "no-state-recovery" "none" \
+  || fail_gate no-state-recovery "recovery invocation refused"
+m1_verify_bucket_preconditions \
+  && m1_check PASS "state-bucket" "private/versioned/CMK-bound" \
+  || fail_gate state-bucket "preconditions failed"
+m1_verify_cmk_enabled \
+  && m1_check PASS "cmk-enabled" "ENABLED" \
+  || fail_gate cmk-enabled "CMK not ENABLED"
+m1_verify_backend_config "$backend_hcl" "$M1_PLATFORM_KEY" \
+  && m1_check PASS "backend-config" "coordinates approved" \
+  || fail_gate backend-config "unexpected backend coordinates"
+
 m1_verify_workspace_default "$M1_TERRAFORM_BIN" "$root" \
   && m1_check PASS "workspace-default" "default" \
   || fail_gate workspace-default "non-default workspace"
@@ -133,9 +137,17 @@ if "$M1_TERRAFORM_BIN" -chdir="$root" apply -input=false -lock=true "$plan_file"
 else
   rc=$?
   tail -60 "$apply_log" >&2
+  # A failed apply consumes this approval record: the plan/metadata pair is
+  # marked applied=FAILED so the same approval can never authorize a retry
+  # (rule 11). A new attempt requires a fresh plan, metadata, and record.
+  jq '.applied = true | .apply_evidence = ("FAILED rc=" + $rc + " — approval consumed; plan must not be re-applied")' \
+    --arg rc "$rc" "$metadata_file" > "$metadata_file.consumed" \
+    && mv "$metadata_file.consumed" "$metadata_file" \
+    && chmod 600 "$metadata_file" \
+    && m1_evidence_record "metadata marked applied=FAILED — approval record consumed"
   m1_evidence_record "GATE FAIL: apply failed rc=$rc — STOP, no retry, no rollback"
   fail_gate terraform-apply \
-    "apply FAILED rc=$rc. STOPPED per rules 11/15: preserve $apply_log, inspect live OCI changes and remote state before any operator decision"
+    "apply FAILED rc=$rc. STOPPED per rules 11/15: preserve $apply_log, inspect live OCI changes and remote state before any operator decision; this approval record is consumed — re-attempting requires a fresh plan, metadata, and approval"
 fi
 
 # Post-apply protected state backup ----------------------------------------------

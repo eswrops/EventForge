@@ -46,7 +46,11 @@ fi
 
 # Default deny: every non-no-op must match a reviewed address/action pair.
 # Unknown security-rule attributes are unsafe because a later apply could
-# reveal public 8080/3306 ingress.
+# reveal public 8080/3306 ingress. Exception: on a CREATE, an unknown
+# source/destination that the pinned source_type/destination_type proves to be
+# a NETWORK_SECURITY_GROUP reference (an id created in the same apply) is
+# deterministic from the reviewed configuration. An unknown CIDR source, any
+# unknown port range, and any unknown on updates remain fatal.
 violations="$(jq -r --slurpfile policy "$policy" '
   def action_key: .change.actions | join(",");
   def matching_rules($address): [$policy[0].allow[] | select(.address_regex as $pattern | ($address | test($pattern)))];
@@ -57,11 +61,35 @@ violations="$(jq -r --slurpfile policy "$policy" '
     (($after.source? == "0.0.0.0/0" or $after.destination? == "0.0.0.0/0") and
       (($after.tcp_options.destination_port_range.min? == 8080) or ($after.tcp_options.destination_port_range.max? == 8080) or
        ($after.tcp_options.destination_port_range.min? == 3306) or ($after.tcp_options.destination_port_range.max? == 3306)));
+  def nsg_ref_unknown:
+    # Direction-aware: on INGRESS rules only SOURCE (and ports) can expose the
+    # resource; destination is an egress-only field the provider nulls at
+    # apply, so its unknown is inert (and vice versa for EGRESS). An unknown
+    # exposure-relevant endpoint is acceptable ONLY on a CREATE whose pinned
+    # *_type proves a NETWORK_SECURITY_GROUP reference created in the same
+    # apply. Unknown CIDR endpoints and any unknown on updates stay fatal.
+    (.change.actions == ["create"]) and
+    (
+      (.change.after.direction == "INGRESS" and
+         .change.after_unknown.source? == true and .change.after.source_type == "NETWORK_SECURITY_GROUP") or
+      (.change.after.direction == "EGRESS" and
+         .change.after_unknown.destination? == true and .change.after.destination_type == "NETWORK_SECURITY_GROUP") or
+      (.change.after.direction == "INGRESS" and .change.after_unknown.destination? == true) or
+      (.change.after.direction == "EGRESS" and .change.after_unknown.source? == true)
+    );
+  def port_range_unknown($dpr):
+    ($dpr | type) == "boolean" and $dpr == true or
+    ((($dpr | type) == "object") and ($dpr.min? == true or $dpr.max? == true));
   def unknown_ingress:
     .change.after_unknown as $unknown |
-    ($unknown.source? == true or $unknown.destination? == true or $unknown.tcp_options? == true or
-      $unknown.tcp_options.destination_port_range? == true or $unknown.tcp_options.destination_port_range.min? == true or
-      $unknown.tcp_options.destination_port_range.max? == true);
+    (nsg_ref_unknown | not) and
+    (($unknown.source? == true) or ($unknown.destination? == true) or ($unknown.tcp_options? == true) or
+     (($unknown.tcp_options | type) == "object" and
+       (port_range_unknown($unknown.tcp_options.destination_port_range?))) or
+     (($unknown.tcp_options | type) == "array" and
+       any(.[];
+            ((if type == "object" then . else {} end) as $to |
+             (($to.destination_port_range? // []) | any(.; port_range_unknown(.)))))));
   .resource_changes[] | select(.change.actions != ["no-op"]) | . as $change |
   (matching_rules(.address) | map(select((.actions | join(",")) == ($change | action_key)))) as $matches |
   if (is_security_rule and unknown_ingress) then "unknown-ingress-attributes\t\(.address)\t\(action_key)"

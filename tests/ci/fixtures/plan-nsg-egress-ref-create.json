@@ -1,0 +1,28 @@
+{
+  "resource_changes": [
+    {
+      "address": "oci_core_network_security_group_security_rule.app_to_mysql",
+      "type": "oci_core_network_security_group_security_rule",
+      "change": {
+        "actions": ["create"],
+        "after": {
+          "description": "app to MySQL egress on 3306",
+          "direction": "EGRESS",
+          "protocol": "6",
+          "destination_type": "NETWORK_SECURITY_GROUP",
+          "destination": null,
+          "stateless": false,
+          "tcp_options": [{ "destination_port_range": [{ "max": 3306, "min": 3306 }], "source_port_range": [] }]
+        },
+        "after_unknown": {
+          "destination": true,
+          "id": true,
+          "network_security_group_id": true,
+          "source": true,
+          "source_type": true,
+          "tcp_options": [{ "destination_port_range": [{}], "source_port_range": [] }]
+        }
+      }
+    }
+  ]
+}
