@@ -17,7 +17,8 @@
 | GitHub Stage-2 IAM policies | **DEFERRED** — behind the first successful live exchange + recorded claim mapping | federation §3; `enable_workload_policies=false` |
 | IAM-DENIAL probe | **NOT_RUN** — requires an underprivileged principal; refuses `DEFAULT` by design | federation §5 |
 | GitHub-dependent release installer as production path | **PREPARED, not local-tested** — local release installation is a separate later mechanism; application deployment is NOT claimed by M1-LOCAL | [../m1-final/release-operations.md](../m1-final/release-operations.md) |
-| NSG attachment to existing VM VNICs / LB | Not part of the additive plan; separate reviewed existing-resource update when API ingress is actually enabled | future gate |
+| NSG attachment to existing VM VNICs / LB / MySQL | **Not required for M1-LOCAL acceptance** (effective posture verified closed via security lists); required before API ingress enablement — in-place updates enumerated in [security.md](security.md) | future ingress gate |
+| Live app security list pins SSH source `49.207.205.137/32` | The reviewed operator input pins `49.207.214.221/32` — SSH from the current address is likely blocked by the pre-existing rule (untouched by this track). Fix by updating the security-list rule or at the NSG-attachment gate (the created app NSG already pins the reviewed /32) | operator, next SSH need |
 | M2 | **NOT_STARTED** (rule 16) | — |
 
 ## Historical evidence preserved
