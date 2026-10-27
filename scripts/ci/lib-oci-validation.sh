@@ -116,20 +116,52 @@ vf_require_auth() {
   esac
 }
 
+# Print the item array of a paginated OCI collection response, accepting — and
+# only accepting — the envelopes that exist in the wild (all verified live on
+# the operator workstation, OCI CLI 3.95.1): the raw collection shape
+# {"data":{"items":[...]}}, the CLI-rendered flattened {"data":[...]}, and the
+# CLI-rendered EMPTY listing, which omits the data key entirely and prints
+# {"prefixes":[...]}. The prefixes discriminator keeps truly malformed
+# documents ({}, {"nope":true}) refused, so an empty history is never claimed
+# from garbage. Prints the normalized JSON array to stdout; exits non-zero on
+# any unrecognized envelope.
+vf_collection_items() {
+  jq -c '
+    (if (.data | type) == "object" then .data.items
+     elif (.data | type) == "array" then .data
+     elif ((.data == null) and (.prefixes | type) == "array") then []
+     else error("unrecognized collection envelope") end)
+    | if (type == "array") then . else error("collection items are not an array") end'
+}
+
 # Read-only bucket encryption/visibility preconditions, required before any
 # live mutation: the authenticated namespace is the approved one, the bucket
 # exists in it, is private, versioned, and CMK-bound with the exact expected
 # key, and that CMK is still enabled. Any failure to complete these checks
 # (authorization, network, malformed response) aborts the script. Requires
-# TF_VALIDATION_EXPECTED_KMS_KEY_ID to name the approved state CMK.
+# TF_VALIDATION_EXPECTED_KMS_KEY_ID to name the approved state CMK and
+# TF_VALIDATION_KMS_COMPARTMENT_OCID to name the compartment whose vaults hold
+# it (the tenancy OCID names the root compartment).
 vf_require_bucket_preconditions() {
   local expected_kms="${TF_VALIDATION_EXPECTED_KMS_KEY_ID:-}"
+  local expected_comp="${TF_VALIDATION_KMS_COMPARTMENT_OCID:-}"
   if [[ -z "$expected_kms" ]]; then
     vf_fail "TF_VALIDATION_EXPECTED_KMS_KEY_ID is required: the exact approved state CMK OCID this package may operate under."
   fi
-  local actual_namespace bucket_json kms_state
-  actual_namespace="$(oci "${VALIDATION_OCI_ARGS[@]}" os ns get 2>/dev/null | jq -r '.' 2>/dev/null)" \
-    || vf_fail "Could not verify the authenticated Object Storage namespace (listing precondition); aborting without any mutation."
+  if [[ -z "$expected_comp" ]]; then
+    vf_fail "TF_VALIDATION_KMS_COMPARTMENT_OCID is required: the compartment whose vaults hold the state CMK (root compartment is the tenancy OCID)."
+  fi
+  case "$expected_comp" in
+    ocid1.tenancy.oc1..*|ocid1.compartment.oc1..*) ;;
+    *) vf_fail "TF_VALIDATION_KMS_COMPARTMENT_OCID '${expected_comp}' is not a tenancy or compartment OCID; refusing an ambiguous KMS compartment." ;;
+  esac
+  local actual_namespace bucket_json
+  # `os ns get` returns the wrapped envelope {"data":"<namespace>"} (verified
+  # live); the bare document or an unwrapped string is malformed.
+  actual_namespace="$(oci "${VALIDATION_OCI_ARGS[@]}" os ns get 2>/dev/null \
+      | jq -r 'if ((.data | type) == "string" and (.data | length) > 0)
+                 then .data else error("missing namespace string in data") end' 2>/dev/null)" \
+    || vf_fail "Could not parse the authenticated Object Storage namespace from 'os ns get' (expected {\"data\":\"<namespace>\"}); aborting without any mutation."
   if [[ "$actual_namespace" != "$VALIDATION_LIB_APPROVED_NAMESPACE" ]]; then
     vf_fail "The authenticated namespace '${actual_namespace:-<malformed>}' is not the approved '${VALIDATION_LIB_APPROVED_NAMESPACE}'."
   fi
@@ -143,11 +175,64 @@ vf_require_bucket_preconditions() {
       .data."kms-key-id" == $kms' <<<"$bucket_json" >/dev/null 2>&1; then
     vf_fail "Bucket '${VALIDATION_LIB_APPROVED_BUCKET}' does not satisfy the approved preconditions (NoPublicAccess, versioning Enabled, CMK-bound to TF_VALIDATION_EXPECTED_KMS_KEY_ID) or the response was malformed."
   fi
-  kms_state="$(oci "${VALIDATION_OCI_ARGS[@]}" kms management key get \
-      --key-id "$expected_kms" 2>/dev/null | jq -r '."lifecycle-state" // empty' 2>/dev/null)" \
-    || vf_fail "Could not read the state CMK ${expected_kms} (authorization or network failure); aborting without any mutation."
-  if [[ "$kms_state" != "ENABLED" ]]; then
-    vf_fail "The state CMK is not ENABLED (reported '${kms_state:-<malformed>}'); encrypted copies would fail — aborting."
+  vf_require_cmk_enabled "$expected_kms" "$expected_comp"
+}
+
+# The state CMK must be read through its vault's ACTUAL management endpoint:
+# `kms management key get` has no regional endpoint and fails with
+# "Missing option --endpoint" without one (verified live). The endpoint source
+# is `kms management vault list --compartment-id ... --all`, which needs no
+# endpoint itself, reading each ACTIVE vault's "management-endpoint". The key
+# response is the wrapped envelope {"data":{"id":...,"lifecycle-state":...}};
+# top-level id/lifecycle-state fields never occur and are refused. The key must
+# be found, must equal the expected OCID, and must be ENABLED — every other
+# outcome (failed vault list, no ACTIVE vault, unreachable endpoints, wrong key,
+# disabled key, malformed response) aborts.
+vf_require_cmk_enabled() {
+  local expected_kms="$1" compartment="$2"
+  local vaults_json vault_items endpoint key_json key_tsv key_id key_state found=""
+  if ! vaults_json="$(oci "${VALIDATION_OCI_ARGS[@]}" kms management vault list \
+      --compartment-id "$compartment" --all 2>/dev/null)"; then
+    vf_fail "Could not list KMS vaults in ${compartment} (authorization, authentication, network, or pagination failure); the state CMK cannot be verified — aborting without any mutation."
+  fi
+  vault_items="$(vf_collection_items <<<"$vaults_json" 2>/dev/null)" \
+    || vf_fail "Malformed KMS vault-list response; refusing to interpret it — aborting without any mutation."
+  while IFS= read -r endpoint; do
+    [[ -n "$endpoint" ]] || continue
+    if ! key_json="$(oci "${VALIDATION_OCI_ARGS[@]}" kms management key get \
+        --key-id "$expected_kms" --endpoint "$endpoint" 2>/dev/null)"; then
+      # A foreign vault (or a transient error) reports the key as absent; the
+      # found-flag check below still fails closed unless one vault returns it.
+      continue
+    fi
+    if ! key_tsv="$(jq -r --arg want "$expected_kms" '
+        (if (.data | type) == "object" then .data
+         else error("unwrapped key envelope") end)
+        | (if (.id | type) == "string" and (.id | length) > 0 then .id
+           else error("missing key id") end) as $id
+        | (if (."lifecycle-state" | type) == "string" and (."lifecycle-state" | length) > 0
+           then ."lifecycle-state" else error("missing lifecycle-state") end) as $state
+        | [$id, $state] | @tsv' <<<"$key_json" 2>/dev/null)"; then
+      vf_fail "Malformed KMS key response from ${endpoint} (expected {\"data\":{\"id\":...,\"lifecycle-state\":...}}); refusing to interpret it — aborting without any mutation."
+    fi
+    key_id="${key_tsv%%$'\t'*}"
+    key_state="${key_tsv#*$'\t'}"
+    if [[ "$key_id" != "$expected_kms" ]]; then
+      vf_fail "The vault management endpoint ${endpoint} returned key id '${key_id}' instead of the approved '${expected_kms}'; refusing to trust this endpoint — aborting."
+    fi
+    if [[ "$key_state" != "ENABLED" ]]; then
+      vf_fail "The state CMK is not ENABLED (reported '${key_state}') via ${endpoint}; encrypted copies would fail — aborting."
+    fi
+    found=1
+    break
+  done < <(jq -r '
+      .[]
+      | select(."lifecycle-state" == "ACTIVE"
+          and (."management-endpoint" | type) == "string"
+          and (."management-endpoint" | length) > 0)
+      | ."management-endpoint"' <<<"$vault_items")
+  if [[ "$found" != "1" ]]; then
+    vf_fail "The state CMK ${expected_kms} was not found ENABLED via any ACTIVE vault's management endpoint in ${compartment} (all lookups failed, reported a foreign key, or no ACTIVE vault with a management endpoint exists); aborting without any mutation."
   fi
 }
 
@@ -160,16 +245,17 @@ vf_require_bucket_preconditions() {
 # only absence claim the package makes.
 vf_require_key_absent() {
   local label="$1" key="$2"
-  local listing versions names errfile
+  local listing listing_items versions version_items names errfile
   errfile="$(mktemp -t eventforge-absence.XXXXXX)"
   if ! listing="$(oci "${VALIDATION_OCI_ARGS[@]}" os object list \
       --bucket-name "$VALIDATION_LIB_APPROVED_BUCKET" \
       --prefix "$key" --all 2>"$errfile")" ; then
     vf_fail "$label absence check failed: the object listing for '${key}' errored (authorization, authentication, network, or pagination problem), which is never treated as absence. Error tail: $(tail -n 3 "$errfile" 2>/dev/null | tr '\n' ' ')"
   fi
+  listing_items="$(vf_collection_items <<<"$listing" 2>/dev/null)" \
+    || vf_fail "$label absence check failed: malformed object-listing response for '${key}'; refusing to interpret it."
   if ! names="$(jq -r --arg key "$key" '
-      (if (.data | type) == "array" then .data else error("missing data array") end)[]
-      | select(."name" == $key) | ."name"' <<<"$listing" 2>/dev/null)"; then
+      .[] | select(."name" == $key) | ."name"' <<<"$listing_items" 2>/dev/null)"; then
     vf_fail "$label absence check failed: malformed object-listing response for '${key}'; refusing to interpret it."
   fi
   if [[ -n "$names" ]]; then
@@ -181,9 +267,15 @@ vf_require_key_absent() {
     vf_fail "$label absence check failed: the object-version listing for '${key}' errored (authorization, authentication, network, or pagination problem), which is never treated as absence. Error tail: $(tail -n 3 "$errfile" 2>/dev/null | tr '\n' ' ')"
   fi
   rm -f "$errfile"
+  # The extended CLI renderer flattens the raw {"data":{"items":[...]}}
+  # collection into {"data":[...]}; both are accepted, anything else is
+  # malformed (never an empty history).
+  version_items="$(vf_collection_items <<<"$versions" 2>/dev/null)" \
+    || vf_fail "$label absence check failed: malformed object-version response for '${key}'; refusing to interpret it."
   if ! names="$(jq -r --arg key "$key" '
-      (if (.data | type) == "array" then .data else error("missing data array") end)[]
-      | select(."name" == $key and ."version-id" != null) | ."name"' <<<"$versions" 2>/dev/null)"; then
+      .[]
+      | select(."name" == $key and (."is-delete-marker" == true or ."version-id" != null))
+      | ."name"' <<<"$version_items" 2>/dev/null)"; then
     vf_fail "$label absence check failed: malformed object-version response for '${key}'; refusing to interpret it."
   fi
   if [[ -n "$names" ]]; then
@@ -199,17 +291,17 @@ vf_require_key_absent() {
 # shellcheck disable=SC2034
 vf_probe_key_status() {
   # shellcheck disable=SC2034  # consumed by the scripts sourcing this library
-  local key="$1" listing
+  local key="$1" listing items
   VALIDATION_PROBE_STATUS="unverifiable"
   if ! listing="$(oci "${VALIDATION_OCI_ARGS[@]}" os object list \
       --bucket-name "$VALIDATION_LIB_APPROVED_BUCKET" \
       --prefix "$key" --all 2>/dev/null)"; then
     return 0
   fi
-  if ! jq -e '(.data | type) == "array"' <<<"$listing" >/dev/null 2>&1; then
+  if ! items="$(vf_collection_items <<<"$listing" 2>/dev/null)"; then
     return 0
   fi
-  if jq -e --arg key "$key" '.data[] | select(."name" == $key) | .' <<<"$listing" >/dev/null 2>&1; then
+  if jq -e --arg key "$key" '.[] | select(."name" == $key) | .' <<<"$items" >/dev/null 2>&1; then
     VALIDATION_PROBE_STATUS="present"
   else
     VALIDATION_PROBE_STATUS="absent"

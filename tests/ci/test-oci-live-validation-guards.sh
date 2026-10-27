@@ -22,6 +22,8 @@ trap '[[ -n "${TEST_KEEP_TMP:-}" ]] || rm -rf "$tmp"' EXIT
 approved_bucket="eventforge-tfstate-prod"
 approved_namespace="axrq1dasyz3y"
 approved_kms="ocid1.key.oc1.ap-hyderabad-1.stubkms"
+approved_compartment="ocid1.tenancy.oc1..stubcompartment"
+stub_mgmt_endpoint="https://stub-vault.management.kms.ap-hyderabad-1.oraclecloud.com"
 run_id="validation-run-1"
 state_key="validation/live-acceptance-${run_id}/terraform.tfstate"
 lock_key="${state_key}.lock"
@@ -170,12 +172,16 @@ parse_flags() {
 }
 
 if [[ "${1:-}" == "os" && "${2:-}" == "ns" ]]; then
-  # oci os ns get
+  # oci os ns get — the real CLI returns the wrapped envelope {"data":"<ns>"}.
   if [[ "${MOCK_NS_FAIL:-0}" == "1" ]]; then
     echo "${MOCK_NS_FAIL_MSG:-ServiceError: NotAuthenticatedOrUnauthorized}" >&2
     exit 1
   fi
-  printf '"%s"\n' "${MOCK_NAMESPACE:?}"
+  if [[ -n "${MOCK_NS_JSON:-}" && -f "$MOCK_NS_JSON" ]]; then
+    cat "$MOCK_NS_JSON"
+  else
+    printf '{"data":"%s"}\n' "${MOCK_NAMESPACE:?}"
+  fi
   exit 0
 fi
 if [[ "${1:-}" == "os" && "${2:-}" == "bucket" ]]; then
@@ -189,14 +195,50 @@ if [[ "${1:-}" == "os" && "${2:-}" == "bucket" ]]; then
   exit 0
 fi
 if [[ "${1:-}" == "kms" && "${2:-}" == "management" ]]; then
-  # oci kms management key get
-  parse_flags "${@:4}"
-  if [[ "${MOCK_KMS_FAIL:-0}" == "1" ]]; then
-    echo "${MOCK_KMS_FAIL_MSG:-ServiceError: NotAuthorizedOrNotFound}" >&2
-    exit 1
+  verb="${3:-}"
+  if [[ "$verb" == "vault" ]]; then
+    # oci kms management vault list — regional call, no --endpoint involved.
+    if [[ "${MOCK_KMS_VAULTS_FAIL:-0}" == "1" ]]; then
+      echo "${MOCK_KMS_VAULTS_FAIL_MSG:-ServiceError: NotAuthorizedOrNotFound}" >&2
+      exit 1
+    fi
+    if [[ -n "${MOCK_KMS_VAULTS_JSON:-}" && -f "$MOCK_KMS_VAULTS_JSON" ]]; then
+      cat "$MOCK_KMS_VAULTS_JSON"
+    else
+      printf '{"data":[],"prefixes":[]}\n'
+    fi
+    exit 0
   fi
-  cat "${MOCK_KMS_JSON:?}"
-  exit 0
+  if [[ "$verb" == "key" ]]; then
+    # oci kms management key get — the real CLI REQUIRES the vault's
+    # management endpoint: without --endpoint it fails before any request.
+    endpoint="" key_id=""
+    while (( $# )); do
+      case "$1" in
+        --endpoint) endpoint="$2"; shift 2;;
+        --key-id) key_id="$2"; shift 2;;
+        *) shift;;
+      esac
+    done
+    if [[ -z "$endpoint" ]]; then
+      echo "Error: Missing option --endpoint." >&2
+      exit 2
+    fi
+    # An endpoint other than the stub vault's management endpoint must fail
+    # the lookup, exactly as a foreign vault would live.
+    if [[ "$endpoint" != "${MOCK_KMS_MANAGEMENT_ENDPOINT:?}" ]]; then
+      echo "ServiceError: NotAuthorizedOrNotFound from ${endpoint}" >&2
+      exit 1
+    fi
+    if [[ "${MOCK_KMS_FAIL:-0}" == "1" ]]; then
+      echo "${MOCK_KMS_FAIL_MSG:-ServiceError: NotAuthorizedOrNotFound}" >&2
+      exit 1
+    fi
+    cat "${MOCK_KMS_JSON:?}"
+    exit 0
+  fi
+  echo "stub oci: unexpected kms management verb: $verb" >&2
+  exit 64
 fi
 if [[ "${1:-}" != "os" || "${2:-}" != "object" ]]; then
   echo "stub oci: unexpected service: $*" >&2
@@ -238,7 +280,8 @@ if [[ "$verb" == "list" ]]; then
   if [[ -n "$names" ]]; then
     printf '%s' "$names" | jq -Rn --arg p "$prefix" '{data:[inputs|select(startswith($p))|{name:.,size:0,etag:"stub"}],prefixes:[]}'
   else
-    printf '{"data":[],"prefixes":[]}\n'
+    # The real CLI renders an EMPTY listing with no data key at all.
+    printf '{"prefixes":[]}\n'
   fi
   exit 0
 fi
@@ -250,7 +293,8 @@ if [[ "$verb" == "list-object-versions" ]]; then
   if [[ -n "${MOCK_VERSIONS_JSON:-}" && -f "$MOCK_VERSIONS_JSON" ]]; then
     cat "$MOCK_VERSIONS_JSON"
   else
-    printf '{"data":[],"prefixes":[]}\n'
+    # The real CLI renders an EMPTY version listing with no data key at all.
+    printf '{"prefixes":[]}\n'
   fi
   exit 0
 fi
@@ -314,13 +358,34 @@ setup_case() {
   jq -n --arg kms "$approved_kms" \
     '{data:{"public-access-type":"NoPublicAccess","versioning":"Enabled","kms-key-id":$kms}}' \
     > "$cdir/bucket.json"
-  jq -n --arg kms "$approved_kms" '{id:$kms,"lifecycle-state":"ENABLED"}' > "$cdir/kms.json"
+  # Realistic KMS fixtures: vault list renders the raw collection with each
+  # ACTIVE vault's management-endpoint; key get returns the wrapped
+  # {"data":{"id":...,"lifecycle-state":...}} envelope.
+  jq -n --arg ep "$stub_mgmt_endpoint" --arg comp "$approved_compartment" \
+    '{data:[{id:"ocid1.vault.oc1.ap-hyderabad-1.stubvault",
+             "compartment-id":$comp,
+             "lifecycle-state":"ACTIVE",
+             "display-name":"stub-vault",
+             "vault-type":"VIRTUAL_PRIVATE",
+             "crypto-endpoint":"https://stub-vault.crypto.kms.ap-hyderabad-1.oraclecloud.com",
+             "management-endpoint":$ep,
+             "time-created":"2026-10-01T00:00:00Z",
+             "defined-tags":{},"freeform-tags":{},
+             "external-key-manager-metadata-summary":null}]}' \
+    > "$cdir/kms-vaults.json"
+  jq -n --arg kms "$approved_kms" --arg comp "$approved_compartment" \
+    '{data:{id:$kms,"lifecycle-state":"ENABLED",
+            "compartment-id":$comp,"curve-id":"NIST_P384",
+            "protection-mode":"HSM","algorithm":"AES",
+            "time-created":"2026-10-01T00:00:00Z"}}' \
+    > "$cdir/kms.json"
   base_vars=(
     "RUN_ID=$run_id"
     "TF_STATE_BUCKET=$approved_bucket"
     "OCI_OBJECT_STORAGE_NAMESPACE=$approved_namespace"
     "OCI_REGION=ap-hyderabad-1"
     "TF_VALIDATION_EXPECTED_KMS_KEY_ID=$approved_kms"
+    "TF_VALIDATION_KMS_COMPARTMENT_OCID=$approved_compartment"
     "TERRAFORM_BIN=$stub_dir/terraform"
     "TF_OCI_AUTH=APIKey"
     "TF_OCI_PROFILE=operator"
@@ -337,6 +402,8 @@ setup_case() {
     "MOCK_NAMESPACE=$approved_namespace"
     "MOCK_BUCKET_JSON=$cdir/bucket.json"
     "MOCK_KMS_JSON=$cdir/kms.json"
+    "MOCK_KMS_VAULTS_JSON=$cdir/kms-vaults.json"
+    "MOCK_KMS_MANAGEMENT_ENDPOINT=$stub_mgmt_endpoint"
   )
 }
 
@@ -346,7 +413,7 @@ set_bucket_field() {
 }
 
 set_kms_state() {
-  jq --arg s "$1" '."lifecycle-state"=$s' "$cdir/kms.json" > "$cdir/kms.json.new" \
+  jq --arg s "$1" '."data"."lifecycle-state"=$s' "$cdir/kms.json" > "$cdir/kms.json.new" \
     && mv "$cdir/kms.json.new" "$cdir/kms.json"
 }
 
@@ -397,43 +464,57 @@ make_state() {
     '{version:4,terraform_version:"1.12.2",serial:$serial,lineage:$lineage,outputs:{},resources:[{mode:"managed",type:"terraform_data",name:"lock_probe",instances:[{schema_version:0,attributes:{id:"stub"}}]}]}'
 }
 
+# Version fixtures come in BOTH real envelopes: "items" (default) is the raw
+# collection {"data":{"items":[...],"prefixes":[...]}} that the generated CLI
+# path renders, and "flat" is the extended CLI renderer's flattened
+# {"data":[...],"prefixes":[...]} — verified live on OCI CLI 3.95.1. The
+# validation scripts must accept exactly these and nothing else.
 make_versions_fixture() {
-  jq -nc --arg key "$state_key" '{
-    data: [
+  local envelope="${1:-items}"
+  jq -nc --arg key "$state_key" --arg env "$envelope" '
+    ([
       {name:$key, size:100, etag:"e-cur", "time-created":"2026-10-27T10:05:00Z", "time-modified":"2026-10-27T10:05:00Z", "version-id":"v-cur", "is-delete-marker":false, "storage-tier":"Standard", "archival-state":null},
       {name:$key, size:90, etag:"e-old", "time-created":"2026-10-27T10:03:00Z", "time-modified":"2026-10-27T10:03:00Z", "version-id":"v-old", "is-delete-marker":false, "storage-tier":"Standard", "archival-state":null},
       {name:$key, size:80, etag:"e-oldest", "time-created":"2026-10-27T10:01:00Z", "time-modified":"2026-10-27T10:01:00Z", "version-id":"v-oldest", "is-delete-marker":false, "storage-tier":"Standard", "archival-state":null},
       {name:$key, size:0, etag:"", "time-created":"2026-10-27T10:02:00Z", "time-modified":"2026-10-27T10:02:00Z", "version-id":"v-marker", "is-delete-marker":true, "storage-tier":"Standard", "archival-state":null}
-    ],
-    prefixes: []
-  }'
+    ]) as $items
+    | (if $env == "flat" then {data:$items, prefixes:[]}
+       else {data:{items:$items, prefixes:[]}} end)'
 }
 
 # Version fixtures for the ABSENCE checks: a reused key whose current object
 # is gone but whose history remains.
 make_prev_versions_only_fixture() {
-  jq -nc --arg key "$state_key" '{
-    data: [
-      {name:$key, size:80, etag:"e-old", "time-created":"2026-10-27T10:01:00Z", "time-modified":"2026-10-27T10:01:00Z", "version-id":"v-old", "is-delete-marker":false, "storage-tier":"Standard", "archival-state":null}
-    ],
-    prefixes: []
-  }'
+  local envelope="${1:-items}"
+  jq -nc --arg key "$state_key" --arg env "$envelope" '
+    ([{name:$key, size:80, etag:"e-old", "time-created":"2026-10-27T10:01:00Z", "time-modified":"2026-10-27T10:01:00Z", "version-id":"v-old", "is-delete-marker":false, "storage-tier":"Standard", "archival-state":null}]) as $items
+    | (if $env == "flat" then {data:$items, prefixes:[]}
+       else {data:{items:$items, prefixes:[]}} end)'
 }
 
 make_delete_marker_only_fixture() {
-  jq -nc --arg key "$state_key" '{
-    data: [
-      {name:$key, size:0, etag:"", "time-created":"2026-10-27T10:02:00Z", "time-modified":"2026-10-27T10:02:00Z", "version-id":"v-marker", "is-delete-marker":true, "storage-tier":"Standard", "archival-state":null}
-    ],
-    prefixes: []
-  }'
+  local envelope="${1:-items}"
+  jq -nc --arg key "$state_key" --arg env "$envelope" '
+    ([{name:$key, size:0, etag:"", "time-created":"2026-10-27T10:02:00Z", "time-modified":"2026-10-27T10:02:00Z", "version-id":"v-marker", "is-delete-marker":true, "storage-tier":"Standard", "archival-state":null}]) as $items
+    | (if $env == "flat" then {data:$items, prefixes:[]}
+       else {data:{items:$items, prefixes:[]}} end)'
+}
+
+# Versions of a PREFIX-NEIGHBORING name only: exact-name matching must treat
+# this as absence of the exact key.
+make_neighbor_versions_fixture() {
+  local envelope="${1:-items}"
+  jq -nc --arg key "${state_key}.neighbor" --arg env "$envelope" '
+    ([{name:$key, size:80, etag:"e-nb", "time-created":"2026-10-27T10:01:00Z", "time-modified":"2026-10-27T10:01:00Z", "version-id":"v-nb", "is-delete-marker":false, "storage-tier":"Standard", "archival-state":null}]) as $items
+    | (if $env == "flat" then {data:$items, prefixes:[]}
+       else {data:{items:$items, prefixes:[]}} end)'
 }
 
 seed_recovery_fixtures() {
   make_state lin-recovery 11 > "$cdir/version-content/v-oldest"
   make_state lin-recovery 12 > "$cdir/version-content/v-old"
   make_state lin-recovery 13 > "$cdir/version-content/v-cur"
-  make_versions_fixture > "$cdir/versions.json"
+  make_versions_fixture "${1:-items}" > "$cdir/versions.json"
   mkdir -p "$cdir/bucket/$(dirname "$state_key")"
   : > "$cdir/bucket/$state_key"
   printf 'v-cur' > "$cdir/bucket/$state_key.version"
@@ -441,9 +522,13 @@ seed_recovery_fixtures() {
 
 # ===================================================================== verify
 # Happy path (APIKey): preconditions, absence proofs, then the full
-# lock/contention/release cycle on the derived key.
+# lock/contention/release cycle on the derived key. The version listing comes
+# from the RAW {"data":{"items":[...]}} envelope carrying only a
+# prefix-neighboring name, so the happy path proves both the envelope
+# acceptance and exact-name matching.
 setup_case verify-happy
 make_state lin-verify 7 > "$cdir/state.json"
+make_neighbor_versions_fixture > "$cdir/versions.json"
 run_case main "$verify_script"
 expect_ok main
 grep -q "Observed lock object while held: $lock_key" "$cdir/main.out" || die "lock object name not reported"
@@ -456,7 +541,10 @@ grep -q -- "--auth api_key --profile operator" "$cdir/oci-calls.log" || die "oci
 # listings of both keys before anything was written.
 grep -q "os ns get" "$cdir/oci-calls.log" || die "authenticated namespace must be verified"
 grep -q "os bucket get" "$cdir/oci-calls.log" || die "bucket encryption preconditions must be verified"
+grep -q "kms management vault list" "$cdir/oci-calls.log" || die "the vault management endpoint must be discovered via vault list"
 grep -q "kms management key get" "$cdir/oci-calls.log" || die "CMK liveness must be verified"
+grep -qF -- "kms management key get --key-id $approved_kms --endpoint $stub_mgmt_endpoint" "$cdir/oci-calls.log" \
+  || die "CMK lookup must target the vault's actual management endpoint"
 for k in "$state_key" "$lock_key"; do
   grep -qF "os object list --bucket-name $approved_bucket --prefix $k --all" "$cdir/oci-calls.log" \
     || die "exact-key object listing with --all required for $k"
@@ -464,7 +552,7 @@ for k in "$state_key" "$lock_key"; do
     || die "exact-key version listing with --all required for $k"
 done
 before_init="$(cat "$cdir/captured/oci-lines-before-init")"
-if (( before_init < 7 )); then
+if (( before_init < 8 )); then
   die "preconditions and absence listings must complete before terraform init (got $before_init calls)"
 fi
 if grep -qE "os object (delete|put|bulk-delete)" "$cdir/oci-calls.log"; then
@@ -473,6 +561,13 @@ fi
 if [[ -n "$(find "$cdir/evidence" -mindepth 1 -print -quit)" ]]; then
   die "successful run must not preserve evidence"
 fi
+
+# The same happy path against the EXTENDED renderer's flattened envelope.
+setup_case verify-happy-flat-envelope
+make_state lin-verify 7 > "$cdir/state.json"
+make_neighbor_versions_fixture flat > "$cdir/versions.json"
+run_case main "$verify_script"
+expect_ok main
 
 # An explicitly supplied TF_BACKEND_VALIDATION_KEY is accepted only when it
 # matches the RUN_ID-derived key exactly.
@@ -557,11 +652,76 @@ setup_case guard-ns-mismatch
 run_case main "$verify_script" MOCK_NAMESPACE=other-namespace
 expect_fail main
 grep -qi "is not the approved" "$cdir/main.err" || die "namespace mismatch must abort"
+setup_case guard-ns-malformed-envelope
+printf '%s' '{"nope":true}' > "$cdir/ns.json"
+run_case main "$verify_script" MOCK_NS_JSON="$cdir/ns.json"
+expect_fail main
+grep -qi 'expected {"data":"<namespace>"}' "$cdir/main.err" || die "malformed namespace envelope must abort"
+setup_case guard-ns-wrong-type
+printf '%s' '{"data":123}' > "$cdir/ns.json"
+run_case main "$verify_script" MOCK_NS_JSON="$cdir/ns.json"
+expect_fail main
+grep -qi "Could not parse the authenticated" "$cdir/main.err" || die "non-string namespace must be refused"
+setup_case guard-ns-empty-string
+printf '%s' '{"data":""}' > "$cdir/ns.json"
+run_case main "$verify_script" MOCK_NS_JSON="$cdir/ns.json"
+expect_fail main
+setup_case guard-ns-failed
+run_case main "$verify_script" MOCK_NS_FAIL=1
+expect_fail main
+grep -qi "aborting without any mutation" "$cdir/main.err" || die "failed namespace read must abort without mutation"
 setup_case guard-bucket-malformed
 printf '%s' '{"data":{"oops":true}}' > "$cdir/bucket.json"
 run_case main "$verify_script"
 expect_fail main
 grep -qi "malformed" "$cdir/main.err" || die "malformed bucket response must abort"
+
+# KMS contract: the CMK must be found ENABLED through the vault's ACTUAL
+# management endpoint, reading the wrapped .data envelope.
+setup_case guard-kms-unwrapped-envelope
+jq -n --arg kms "$approved_kms" '{id:$kms,"lifecycle-state":"ENABLED"}' > "$cdir/kms.json"
+run_case main "$verify_script"
+expect_fail main
+grep -qi "Malformed KMS key response" "$cdir/main.err" || die "unwrapped key envelope must be refused"
+setup_case guard-kms-wrong-key-id
+jq '.data.id="ocid1.key.oc1.ap-hyderabad-1.someotherkey"' "$cdir/kms.json" > "$cdir/kms.json.new" \
+  && mv "$cdir/kms.json.new" "$cdir/kms.json"
+run_case main "$verify_script"
+expect_fail main
+grep -qi "returned key id" "$cdir/main.err" || die "foreign key id from the vault must abort"
+setup_case guard-kms-comp-missing
+run_case main "$verify_script" TF_VALIDATION_KMS_COMPARTMENT_OCID=
+expect_fail main
+grep -qi "TF_VALIDATION_KMS_COMPARTMENT_OCID is required" "$cdir/main.err" || die "missing KMS compartment must abort"
+setup_case guard-kms-comp-malformed
+run_case main "$verify_script" TF_VALIDATION_KMS_COMPARTMENT_OCID=notanocid
+expect_fail main
+grep -qi "not a tenancy or compartment OCID" "$cdir/main.err" || die "malformed compartment OCID must abort"
+setup_case guard-kms-vault-list-failed
+run_case main "$verify_script" MOCK_KMS_VAULTS_FAIL=1
+expect_fail main
+grep -qi "Could not list KMS vaults" "$cdir/main.err" || die "failed vault listing must abort"
+setup_case guard-kms-vaults-malformed
+printf '%s' '{"data":"not-a-collection"}' > "$cdir/kms-vaults.json"
+run_case main "$verify_script"
+expect_fail main
+grep -qi "Malformed KMS vault-list response" "$cdir/main.err" || die "malformed vault listing must abort"
+setup_case guard-kms-no-active-vault
+printf '%s' '{"data":[{"id":"ocid1.vault.oc1.ap-hyderabad-1.stubvault","lifecycle-state":"DELETED","management-endpoint":"'"$stub_mgmt_endpoint"'"}],"prefixes":[]}' > "$cdir/kms-vaults.json"
+run_case main "$verify_script"
+expect_fail main
+grep -qi "not found ENABLED via any ACTIVE vault" "$cdir/main.err" || die "no ACTIVE vault must abort"
+setup_case guard-kms-wrong-endpoint
+jq -n --arg ep "https://foreign-vault.management.kms.ap-hyderabad-1.oraclecloud.com" \
+  '.data[0]."management-endpoint"=$ep' "$cdir/kms-vaults.json" > "$cdir/kms-vaults.json.new" \
+  && mv "$cdir/kms-vaults.json.new" "$cdir/kms-vaults.json"
+run_case main "$verify_script"
+expect_fail main
+grep -qi "not found ENABLED via any ACTIVE vault" "$cdir/main.err" || die "an incorrect management endpoint must never verify the CMK"
+setup_case guard-kms-key-missing
+run_case main "$verify_script" MOCK_KMS_FAIL=1
+expect_fail main
+grep -qi "not found ENABLED via any ACTIVE vault" "$cdir/main.err" || die "an unreachable CMK must abort"
 
 # Absence checks: a failed or unverifiable listing is never absence.
 setup_case absence-list-403
@@ -586,6 +746,38 @@ printf '%s' '{"oops":1}' > "$cdir/versions.json"
 run_case main "$verify_script"
 expect_fail main
 grep -qi "malformed" "$cdir/main.err" || die "malformed version response must abort"
+setup_case absence-versions-items-malformed
+printf '%s' '{"data":{"items":"not-an-array"}}' > "$cdir/versions.json"
+run_case main "$verify_script"
+expect_fail main
+grep -qi "malformed object-version response" "$cdir/main.err" || die "non-array version items must abort"
+setup_case absence-versions-scalar-data
+printf '%s' '{"data":123}' > "$cdir/versions.json"
+run_case main "$verify_script"
+expect_fail main
+grep -qi "malformed object-version response" "$cdir/main.err" || die "scalar .data version response must abort"
+
+# Reuse detection works in BOTH real envelopes.
+setup_case absence-versions-flat-envelope
+make_prev_versions_only_fixture flat > "$cdir/versions.json"
+run_case main "$verify_script"
+expect_fail main
+grep -qi "historical versions or a delete marker" "$cdir/main.err" || die "flat-envelope version reuse must be refused"
+
+# An empty version history is absence and the run proceeds normally, in BOTH
+# real empty shapes: the rendered {"prefixes":[]} (no data key — the CLI's
+# actual empty output, the stub default everywhere) and the raw
+# {"data":{"items":[]}}.
+setup_case absence-versions-empty-items
+make_state lin-verify 7 > "$cdir/state.json"
+printf '%s' '{"prefixes":[]}' > "$cdir/versions.json"
+run_case main "$verify_script"
+expect_ok main
+setup_case absence-versions-empty-items-raw
+make_state lin-verify 7 > "$cdir/state.json"
+printf '%s' '{"data":{"items":[],"prefixes":[]},"prefixes":[]}' > "$cdir/versions.json"
+run_case main "$verify_script"
+expect_ok main
 
 # A reused key counts even when only its history remains.
 setup_case absence-previous-versions
@@ -594,7 +786,7 @@ run_case main "$verify_script"
 expect_fail main
 grep -qi "historical versions or a delete marker" "$cdir/main.err" || die "previous-version reuse must be refused"
 setup_case absence-delete-marker
-make_delete_marker_only_fixture > "$cdir/versions.json"
+make_delete_marker_only_fixture items > "$cdir/versions.json"
 run_case main "$verify_script"
 expect_fail main
 grep -qi "historical versions or a delete marker" "$cdir/main.err" || die "delete-marker reuse must be refused"
@@ -802,6 +994,14 @@ grep -q "Restored $state_key version v-oldest to $restore_key" "$cdir/main.out" 
 grep -qi "byte-identical to the selected source-version snapshot" "$cdir/main.out" || die "full-snapshot verification must be reported"
 grep -q "os ns get" "$cdir/oci-calls.log" || die "recovery must verify bucket preconditions too"
 
+# The same rehearsal against the EXTENDED renderer's flattened envelope.
+setup_case recovery-flat-envelope
+seed_recovery_fixtures flat
+make_state lin-recovery 11 > "$cdir/state.json"
+run_case main "$recovery_script"
+expect_ok main
+grep -qF -- "--source-version-id v-oldest" "$cdir/oci-calls.log" || die "flat-envelope rehearsal must select the oldest noncurrent version"
+
 setup_case recovery-explicit-version
 seed_recovery_fixtures
 make_state lin-recovery 12 > "$cdir/state.json"
@@ -849,6 +1049,13 @@ printf '%s' '{"data":"not-an-array"}' > "$cdir/versions.json"
 run_case main "$recovery_script"
 expect_fail main
 grep -qi "malformed object-version response" "$cdir/main.err" || die "malformed version response must abort"
+
+setup_case recovery-malformed-items
+seed_recovery_fixtures
+printf '%s' '{"data":{"items":{"oops":1}}}' > "$cdir/versions.json"
+run_case main "$recovery_script"
+expect_fail main
+grep -qi "malformed object-version response" "$cdir/main.err" || die "non-array items must abort"
 
 setup_case recovery-copy-failed
 seed_recovery_fixtures

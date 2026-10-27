@@ -30,6 +30,10 @@ jobs:
       # Exact state CMK OCID the bucket must be bound to; the scripts refuse to
       # mutate unless the bucket preconditions verify against it.
       TF_VALIDATION_EXPECTED_KMS_KEY_ID: ${{ vars.TF_VALIDATION_EXPECTED_KMS_KEY_ID }}
+      # Compartment whose vaults hold the state CMK (root compartment is the
+      # tenancy OCID); the precondition discovers the vault's actual management
+      # endpoint from `kms management vault list` in it.
+      TF_VALIDATION_KMS_COMPARTMENT_OCID: ${{ vars.TF_VALIDATION_KMS_COMPARTMENT_OCID }}
       RUN_ID: ${{ inputs.run_id }}
       # The CI identity is the RPST resource principal; API-key mode is the
       # operator-workstation path and stays documented in the approval package.
