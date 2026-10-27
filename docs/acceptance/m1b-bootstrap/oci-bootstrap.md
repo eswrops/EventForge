@@ -22,6 +22,13 @@ reports **exactly 10 creates, 0 changes, 0 destroys**:
 | 9 | `oci_ons_notification_topic.operations` | topic `eventforge-operations` | Alerts sink |
 | 10 | `oci_ons_subscription.operations_email` | EMAIL subscription | Requires the operator to confirm the subscription email |
 
+**Stage split (mission M1-final, §5C):** resources 7 and 8 (the two GitHub workload policies) are
+now behind `enable_workload_policies` (default **false**). Their statements constrain the
+exchanged principal with draft claim keys (e.g. `github_environment`) that only the first live
+token exchange can verify, so **Stage 1 applies exactly 8 creates** (1–6, 9, 10); **Stage 2**
+flips the flag and adds the two policies (2 creates) only after the claim mapping is confirmed
+live. `tests/ci/test-bootstrap-policy.sh` enforces the gate.
+
 **Non-mutation confirmation ✅** — the bootstrap root declares none of: `oci_core_instance`,
 `oci_mysql_mysql_db_system`, `oci_core_vcn`, `oci_core_subnet`, `oci_load_balancer_load_balancer`,
 any `oci_core_security_list`/`oci_core_route_table`, or any compute resource. The preflight

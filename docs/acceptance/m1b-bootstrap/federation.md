@@ -68,7 +68,9 @@ The statements below are **drafts**: the claim key names available on the exchan
 first live exchange; the variable validation in `infra/bootstrap/variables.tf` requires every
 statement to constrain `request.principal`. Statement sets go into
 `github_plan_oidc_policy_statements` / `github_apply_oidc_policy_statements` in the operator's
-git-ignored `terraform.auto.tfvars`.
+git-ignored `terraform.auto.tfvars`. Both policy resources are additionally gated behind
+`enable_workload_policies` (default **false**): they are created only in **Stage 2**, after a
+live exchange has verified the claim mapping — the Stage 1 bootstrap apply must not install them.
 
 **production-plan (plan identity) — reads + state/lock only, no mutation, no state overwrite:**
 

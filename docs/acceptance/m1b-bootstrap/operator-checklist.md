@@ -52,8 +52,11 @@ throughout; `enable_api_ingress` remains false in every tfvars and plan.**
    `infra/bootstrap/terraform.auto.tfvars` (incl. `kms_key_compartment_ocid` and the federation
    statements from [federation.md](federation.md) §C); then
    `cd infra/bootstrap && terraform plan -input=false -refresh=false -out=/secure/plan-review.tfplan`.
-   Expected: exactly 10 creates, 0 changes, 0 destroys — any destroy/replacement is a STOP.
-   Read-only against OCI except state-free planning. Approval: [ ] date: ______ reviewer: ______
+   Expected for the **Stage 1** apply (`enable_workload_policies = false`, the default): exactly
+   **8 creates**, 0 changes, 0 destroys — any destroy/replacement is a STOP. The two GitHub
+   workload policies are Stage 2 (2 creates after flipping the flag) and may only be applied once
+   the first live token exchange has verified the principal claim mapping. Read-only against OCI
+   except state-free planning. Approval: [ ] date: ______ reviewer: ______
 
 9. **Obtain separate bootstrap apply approval.** — This is the first `terraform apply` of the
    project; it needs its own explicit approval, not the plan-review one.

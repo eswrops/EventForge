@@ -63,4 +63,16 @@ assert_contains "$main_tf" 'kms_key_id     = var.state_bucket_kms_key_id' \
 assert_contains "$main_tf" 'access_type    = "NoPublicAccess"' \
   "NoPublicAccess buckets"
 
+# Workload federation policies stay behind the Stage 2 gate: both must be
+# count-gated on enable_workload_policies (default false) so an unverified
+# principal-claim mapping cannot reach the Stage 1 apply.
+if [ "$(grep -cE 'count[[:space:]]*=[[:space:]]*var\.enable_workload_policies \? 1 : 0' "$main_tf")" -lt 2 ]; then
+  echo "FAIL: stage gate missing on one of the GitHub workload policies" >&2
+  exit 1
+fi
+assert_contains "$variables_tf" 'variable "enable_workload_policies"' \
+  "enable_workload_policies variable declaration"
+assert_contains "$variables_tf" 'default     = false' \
+  "workload policies default to not-created (Stage 1)"
+
 echo "bootstrap KMS policy-string tests passed"
