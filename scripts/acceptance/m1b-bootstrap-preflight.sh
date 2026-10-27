@@ -50,6 +50,7 @@ expected_owner_id="${EXPECTED_OWNER_ID:-237514587}"
 expected_owner="${EXPECTED_OWNER:-eswrops}"
 expected_repo="${EXPECTED_REPO:-EventForge}"
 expected_reviewer_ids="${EXPECTED_REVIEWER_IDS:-237514587}"
+expected_reviewer_ids_sorted="$(printf '%s' "$expected_reviewer_ids" | jq -Rr 'split(",") | sort | join(",")')"
 expected_state_bucket="${EXPECTED_STATE_BUCKET:-eventforge-tfstate-prod}"
 expected_backup_bucket="${EXPECTED_BACKUP_BUCKET:-eventforge-backups}"
 expected_ci_contexts=(
@@ -75,7 +76,13 @@ record() {
 git_commit="$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || echo unknown)"
 
 # ---------------------------------------------------------------- GitHub ----
-gh_api() { gh api "$@" 2>/dev/null; }
+# PREFLIGHT_GH_STUB, when set, replaces the gh CLI with a fixture command so
+# the environment checks can be tested offline (tests/acceptance/*).
+if [[ -n "${PREFLIGHT_GH_STUB:-}" ]]; then
+  gh_api() { "$PREFLIGHT_GH_STUB" "$@" 2>/dev/null; }
+else
+  gh_api() { gh api "$@" 2>/dev/null; }
+fi
 
 if [[ "$skip_github" == true ]]; then
   for c in gh-repo-identity gh-environment-production-plan gh-environment-production \
@@ -105,7 +112,7 @@ else
 
   check_environment() {
     local name="$1"
-    local env_json policies reviewer_json reviewer_ids branch_policy_count branch_main
+    local env_json policies reviewer_ids branch_policy_count branch_main
     env_json="$(gh_api "repos/${expected_owner}/${expected_repo}/environments/${name}")"
     if [[ -z "$env_json" ]] || ! jq -e '.html_url' <<<"$env_json" >/dev/null 2>&1; then
       record "gh-environment-${name}" BLOCKED "environment does not exist; create it with required reviewers and a main-only deployment branch policy before attaching credentials (docs/acceptance/m1b-bootstrap/github-security.md)"
@@ -113,21 +120,36 @@ else
     fi
     # The protection rule type has been observed as both 'required_reviewer'
     # and 'required_reviewers'; match either and compare the exact reviewer IDs.
-    reviewer_json="$(jq -c '[.protection_rules[]? | select(.type | test("^required_reviewers?$")) | [.reviewers[]?.reviewer.id]]' <<<"$env_json" 2>/dev/null)"
-    reviewer_ids="$(jq -r 'map(tostring) | join(",")' <<<"${reviewer_json:-[]}")"
+    # Reviewer IDs must be extracted flat (the nested-array form yields
+    # [[237514587]], which never equals the expected list) and compared as a
+    # sorted set. prevent_self_review lives inside the required_reviewers
+    # protection-rule object, not at the environment's top level.
+    reviewer_ids="$(jq -r '
+      [ .protection_rules[]?
+        | select(.type == "required_reviewers" or .type == "required_reviewer")
+        | .reviewers[]?
+        | select(.type == "User")
+        | .reviewer.id
+        | tostring ]
+      | unique | sort | join(",")' <<<"$env_json" 2>/dev/null)"
+    prevent_self="$(jq -r '
+      [ .protection_rules[]?
+        | select(.type == "required_reviewers" or .type == "required_reviewer")
+        | .prevent_self_review ]
+      | if length == 1 then .[0] | tostring else "missing" end' <<<"$env_json" 2>/dev/null)"
     policies="$(gh_api "repos/${expected_owner}/${expected_repo}/environments/${name}/deployment-branch-policies")"
     branch_policy_count="$(jq -r '."branch_policies" | length' <<<"${policies:-}" 2>/dev/null)"
     branch_main="$(jq -r --arg main main '[."branch_policies"[]."name"] | index($main) != null' <<<"${policies:-}" 2>/dev/null)"
-    if [[ "${branch_main:-}" == "true" && "${branch_policy_count:-0}" == "1" && "$reviewer_ids" == "$expected_reviewer_ids" ]]; then
-      # jq's // operator treats false as empty, so read prevent_self_review directly.
-      prevent_self="$(jq -r '.prevent_self_review // "unset"' <<<"$env_json")"
+    if [[ "${branch_main:-}" == "true" && "${branch_policy_count:-0}" == "1" && "$reviewer_ids" == "$expected_reviewer_ids_sorted" ]]; then
       if [[ "$prevent_self" == "true" ]]; then
         record "gh-environment-${name}" BLOCKED "protection is complete, but prevent_self_review=true would deadlock the documented single-operator approval model; set it to false (github-security.md §4)"
+      elif [[ "$prevent_self" != "false" ]]; then
+        record "gh-environment-${name}" BLOCKED "protection is incomplete: prevent_self_review is ${prevent_self}; re-run the §4 creation command which sets it explicitly"
       else
-        record "gh-environment-${name}" PASS "required reviewers with exact IDs (${reviewer_ids}), exactly one deployment branch policy restricted to main, prevent_self_review=${prevent_self}"
+        record "gh-environment-${name}" PASS "required reviewers with exact IDs (${reviewer_ids}), exactly one deployment branch policy restricted to main, prevent_self_review=false"
       fi
     else
-      record "gh-environment-${name}" BLOCKED "exists but incomplete protection: reviewer ids '${reviewer_ids:-unknown}' (want ${expected_reviewer_ids}), branch policy count ${branch_policy_count:-unknown} (want exactly 1, main-only: ${branch_main:-unknown}); complete github-security.md §4 before attaching credentials"
+      record "gh-environment-${name}" BLOCKED "exists but incomplete protection: reviewer ids '${reviewer_ids:-unknown}' (want ${expected_reviewer_ids_sorted}), branch policy count ${branch_policy_count:-unknown} (want exactly 1, main-only: ${branch_main:-unknown}), prevent_self_review ${prevent_self:-unknown}; complete github-security.md §4 before attaching credentials"
     fi
   }
   check_environment production-plan

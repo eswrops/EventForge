@@ -17,3 +17,7 @@ echo "acceptance runner report contract passed"
 
 # The M1B.1 bootstrap preflight must run read-only with no live sessions.
 "$repo_root/tests/acceptance/test-preflight.sh"
+
+# Environment protection detection must be exercised against fixture GitHub
+# responses (correct reviewer / wrong reviewer / self-review prevention).
+"$repo_root/tests/acceptance/test-preflight-github.sh"

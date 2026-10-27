@@ -9,7 +9,9 @@ on:
       - '.github/workflows/terraform-apply.yml'
       - '.github/workflows/oci-backend-validation.yml'
       - 'scripts/ci/**'
+      - 'scripts/acceptance/**'
       - 'tests/ci/**'
+      - 'tests/acceptance/**'
 
 permissions:
   contents: read
