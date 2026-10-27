@@ -16,7 +16,9 @@ throughout; `enable_api_ingress` remains false in every tfvars and plan.**
 
 3. **Obtain approval for GitHub environment creation.** — Record the decision (approver, scope:
    the two environments, no credentials attached yet).
-   Approval: [ ] date: ______ reviewer: ______
+   Approval: [x] 2026-10-27 — operator review of M1B.1.1 directed M1B.2 step 4 as an "Approved
+   GitHub mutation" (create `production-plan` and `production` only; no credentials, no other
+   settings). Recorded before execution.
 
 4. **Create and verify GitHub environments.** — Exact commands in
    [github-security.md](github-security.md) §4 for `production-plan` and `production`; then the
