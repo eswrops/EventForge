@@ -1,0 +1,49 @@
+--- a/internal/states/remote/state.go
++++ b/internal/states/remote/state.go
+@@ -186,19 +186,41 @@
+ 		// We might be writing a new state altogether, but before we do that
+ 		// we'll check to make sure there isn't already a snapshot present
+ 		// that we ought to be updating.
++		//
++		// refreshState overwrites s.lineage and s.serial when the remote
++		// holds no snapshot, so preserve any metadata staged here by a
++		// prior WriteStateForMigration call.
++		stagedLineage := s.lineage
++		stagedSerial := s.serial
+ 		err := s.refreshState()
+ 		if err != nil {
+ 			return fmt.Errorf("failed checking for existing remote state: %s", err)
+ 		}
+ 		log.Printf("[DEBUG] states/remote: after refresh, state read serial is: %d; serial is: %d", s.readSerial, s.serial)
+ 		log.Printf("[DEBUG] states/remote: after refresh, state read lineage is: %s; lineage is: %s", s.readLineage, s.lineage)
++		if s.lineage != "" && stagedLineage != "" {
++			// A migration staged snapshot metadata via WriteStateForMigration
++			// and a remote snapshot now exists that was not visible when that
++			// metadata was staged (the destination appeared, or the manager was
++			// never refreshed). Persisting here would overwrite that snapshot
++			// with the staged state without a serial advance or a validity
++			// check, so refuse and let the caller refresh and retry.
++			return fmt.Errorf("remote state with lineage %q, serial %d appeared while state for lineage %q, serial %d was staged for writing; refresh and retry to avoid overwriting it", s.lineage, s.serial, stagedLineage, stagedSerial)
++		}
+ 		if s.lineage == "" { // indicates that no state snapshot is present yet
+-			lineage, err := uuid.GenerateUUID()
+-			if err != nil {
+-				return fmt.Errorf("failed to generate initial lineage: %v", err)
++			if stagedLineage != "" {
++				// A migration staged lineage/serial via WriteStateForMigration;
++				// keep them and advance the serial to record this write.
++				s.lineage = stagedLineage
++				s.serial = stagedSerial + 1
++			} else {
++				lineage, err := uuid.GenerateUUID()
++				if err != nil {
++					return fmt.Errorf("failed to generate initial lineage: %v", err)
++				}
++				s.lineage = lineage
++				s.serial++
+ 			}
+-			s.lineage = lineage
+-			s.serial++
+ 		}
+ 	}
+ 
