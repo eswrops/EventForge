@@ -157,8 +157,8 @@ resource "oci_mysql_mysql_db_system" "existing" {
   # system (2026-10-28): the provider's UpdateDbSystem silently ignored
   # nsg_ids, and the direct CLI UPDATE_DBSYSTEM work request FAILED — see
   # blockers.md B5. The db security list (3306 from the app subnet) remains
-  # the governing control; re-add nsg_ids = [oci_core_network_security_group.db.id]
-  # once the service supports NSG updates on this system.
+  # the governing control; re-add the db NSG association here once the
+  # service supports NSG updates on this system.
   admin_username = var.mysql_admin_username
   admin_password = var.mysql_admin_password
   backup_policy {
