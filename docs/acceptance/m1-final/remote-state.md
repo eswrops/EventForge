@@ -154,13 +154,20 @@ do not substitute for the live runs in §7.**
 
 ## 7. Remaining approval boundaries (unchanged, still operator-gated)
 
-1. Live `scripts/ci/verify-oci-backend.sh` on the disposable `validation/…` key
-   (and recording the real lock-object suffix for the federation policy, §5).
-2. Live `scripts/ci/verify-oci-backend-denied.sh` with an underprivileged
-   resource principal (redacted denial evidence).
+1. Live `scripts/ci/verify-oci-backend.sh` (hardened: mandatory `RUN_ID`
+   confinement, approved-coordinate fail-closed checks, Terraform 1.12.2 pin,
+   EXIT/INT/TERM reaping and evidence preservation) under the
+   [live-backend-validation-approval.md](live-backend-validation-approval.md)
+   package, recording the real lock-object suffix for the federation policy
+   (§5).
+2. Live `scripts/ci/verify-oci-backend-denied.sh` with an explicitly
+   underprivileged principal in the federation phase (redacted denial
+   evidence); deferred — never run under the privileged operator profile, and
+   no PASS claimed from administrator-profile or mock runs.
 3. Encryption validation (§6: bucket/object KMS id + versioning = Enabled).
-4. Version-recovery rehearsal on `validation/` keys per §7 (offline analogue
-   now exists; live rehearsal still requires approval).
+4. Version-recovery rehearsal on `validation/` keys per §7 via the committed
+   `scripts/acceptance/oci-state-version-recovery.sh` (offline regression
+   tests exist; live rehearsal still requires approval).
 5. `platform/` and `frontend/` backend migrations: each requires its own
    STATE-MIGRATION approval; given this defect, each must take its §2 backup
    and record lineage/serial before and after. A patched Terraform (or an

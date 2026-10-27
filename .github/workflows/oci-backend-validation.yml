@@ -2,6 +2,14 @@ name: OCI backend validation
 
 on:
   workflow_dispatch:
+    inputs:
+      run_id:
+        description: >-
+          RUN_ID for this validation run; the scripts derive and confine every
+          object key to validation/live-acceptance-<RUN_ID>/ and
+          validation/restore-test-<RUN_ID>/ from it.
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -19,15 +27,23 @@ jobs:
       OCI_REGION: ${{ vars.OCI_REGION }}
       TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
       OCI_OBJECT_STORAGE_NAMESPACE: ${{ vars.OCI_OBJECT_STORAGE_NAMESPACE }}
+      RUN_ID: ${{ inputs.run_id }}
+      # The CI identity is the RPST resource principal; API-key mode is the
+      # operator-workstation path and stays documented in the approval package.
+      TF_OCI_AUTH: ResourcePrincipal
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
         with:
           terraform_version: 1.12.2
           terraform_wrapper: false
+      - name: Pin the Terraform binary path
+        run: echo "TERRAFORM_BIN=$(command -v terraform)" >> "$GITHUB_ENV"
       - name: Exchange GitHub identity for OCI RPST
         env:
           OCI_WIF_CONFIG_JSON: ${{ secrets.OCI_WIF_CONFIG_JSON }}
         run: scripts/ci/configure-oci-wif.sh
       - name: Verify backend state and locking
         run: scripts/ci/verify-oci-backend.sh
+      - name: Rehearse state version recovery
+        run: scripts/acceptance/oci-state-version-recovery.sh
