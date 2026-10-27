@@ -86,3 +86,24 @@ Confirmed by operator review of the merged M1B.1.1 code:
   the apply identity's `manage all-resources` was narrowed to the resource types the platform root
   actually manages (network-security-groups, load-balancers, alarms, usage-budgets) pending
   verification of exact resource-type names and claim keys during step-8 review.
+
+## 6. `os object copy` source-bucket option (P0, found in first live execution 2026-10-27)
+
+- Defect: `scripts/acceptance/oci-state-version-recovery.sh` invoked the version copy as
+  `oci os object copy --source-bucket <bucket> …`. OCI CLI 3.95.1 (operator workstation, the
+  only approved execution environment) has **no** `--source-bucket` option; the command aborts
+  at argument parsing ("No such option '--source-bucket'. Did you mean
+  '--source-object-name'?") before any API call, so the copy never started and nothing was
+  written. The offline fixtures could not catch it because the stubbed `oci` accepts any
+  well-formed argv — option-name validity against the real CLI is only checkable against
+  `oci os object copy --help`, which is what the fix verified.
+- Correction: the source bucket is carried by the command group's `[required]` `--bucket-name`
+  option. `--source-version-id`, `--destination-*`, `--destination-object-if-none-match-e-tag`,
+  and `--wait-for-state` were verified present in the live help and are unchanged. The same
+  wrong option in the [state-recovery.md](state-recovery.md) §7 manual command was corrected.
+- Regression guard: the offline fixtures now assert the copy line carries
+  `--bucket-name <approved bucket>` and refuse any `--source-bucket` occurrence.
+- Live record: the failure occurred during the first approved execution (package revision
+  "OCI CLI CONTRACT FIX 1", RUN_ID `20261027T120000Z-m1live`) after STATE-LOCKING and
+  STATE-CONTENTION had already PASSED; the script preserved its evidence directory and the
+  used live-acceptance key stays retained for review per the package's §11 rollback boundary.

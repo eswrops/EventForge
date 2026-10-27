@@ -985,6 +985,10 @@ if grep -qE "os object list-versions " "$cdir/oci-calls.log"; then
   die "recovery must not use the unsupported list-versions command"
 fi
 copy_line="$(grep "os object copy" "$cdir/oci-calls.log")"
+grep -qF -- "--bucket-name $approved_bucket" <<<"$copy_line" || die "copy must carry the source bucket via the required --bucket-name option"
+if grep -q -- "--source-bucket" "$cdir/oci-calls.log"; then
+  die "copy must never use the nonexistent --source-bucket option (CLI 3.95.1 rejects it at argument parsing)"
+fi
 grep -q -- "--source-version-id v-oldest" <<<"$copy_line" || die "oldest noncurrent version must be selected"
 grep -q -- "--wait-for-state COMPLETED" <<<"$copy_line" || die "copy must wait for async completion"
 grep -q -- "--destination-object-if-none-match-e-tag" <<<"$copy_line" || die "copy must carry the conditional none-match header"
