@@ -374,21 +374,68 @@ package**. Therefore:
   balancer, or Cloudflare resource; no rollback outside Object Storage is
   possible from this package.
 
-## 12. Execution record (to be filled at execution time, separate approval)
+## 12. Execution record (filled 2026-10-27 — two runs, see the RUN_ID entry)
 
-- [ ] Merge commit (from §1):
-- [ ] Script hashes verified (`shasum -a 256 -c` style check performed):
-- [ ] RUN_ID used:
-- [ ] Operator:
-- [ ] Auth mode/profile used:
-- [ ] STATE-LOCKING output retained at:
-- [ ] Observed lock object name:
-- [ ] Version ids observed:
-- [ ] STATE-RECOVERY evidence retained at:
-- [ ] TF_VALIDATION_EXPECTED_KMS_KEY_ID used (transcribed from tfvars):
-- [ ] TF_VALIDATION_KMS_COMPARTMENT_OCID used (transcribed from tfvars):
-- [ ] Bucket preconditions verified live (NoPublicAccess / versioning / CMK bound + ENABLED):
-- [ ] KMS ids confirmed:
-- [ ] Vault management endpoint used (as reported by `kms management vault list`):
-- [ ] IAM-DENIAL: NOT_RUN (deferred to federation phase)
-- [ ] Cleanup performed (ids deleted, when; separate approval reference):
+- [x] Merge commit (from §1): run 1 executed from `68b94c6477bc537707f468453c9332f06dc18b43`
+      (revision OCI CLI CONTRACT FIX 1); run 2 executed from `ba4be3a` — the COPY CONTRACT FIX 1
+      stamp of merge commit `8d424114e15f361a1357765f0e151ec0c0c55e34` (PR #28, fix; PR #30, stamp).
+- [x] Script hashes verified (`shasum -a 256` vs §1): run 1 — all four matched the CONTRACT FIX 1
+      table (recovery script `47705b53…`); run 2 — all four matched the COPY CONTRACT FIX 1 table
+      (recovery script `b6a1289c92d17304c59904a6e3d4b215a95b6f6fe709b3264461408607e7f985`).
+      Offline guard suite PASS before each run.
+- [x] RUN_ID used: `20261027T120000Z-m1live` (run 1) and `20261027T130000Z-m1live-r2` (run 2).
+      **Run 1: STATE-LOCKING PASS, STATE-CONTENTION PASS, STATE-RECOVERY FAIL** — the recovery
+      script aborted at `os object copy` argument parsing (no `--source-bucket` option in CLI
+      3.95.1; zero API calls, nothing written beyond the step-1 keys; evidence auto-preserved).
+      Fixed by PR #28 with offline regression guards; per §11 run 2 used a FRESH RUN_ID with both
+      its keys proven absent beforehand. **Run 2: STATE-LOCKING PASS, STATE-CONTENTION PASS,
+      STATE-RECOVERY PASS.** Run-1 keys retained untouched for review.
+- [x] Operator: workstation automation executing under the operator's local DEFAULT API-key
+      profile (principal `easwarendra.ece@gmail.com`), on the operator's behalf, under this
+      package + the M1-final mission approval of 2026-10-27.
+- [x] Auth mode/profile used: `TF_OCI_AUTH=APIKey`, `TF_OCI_PROFILE=DEFAULT`; pinned
+      `TERRAFORM_BIN=/Users/eswr/tools/terraform/1.12.2/terraform` (v1.12.2).
+- [x] STATE-LOCKING output retained at: `/Users/eswr/secure/evidence/m1live-20261027T120000Z/`
+      (mode 0700): `state-locking-contention.log` (run 1), `r2-state-locking-contention.log`
+      (run 2), `r2-state-recovery.log` (run 2), `state-recovery.log` + `00-guard-refused-missing-env.log`
+      (run 1 — includes one earlier invocation the RUN_ID guard correctly refused before any
+      OCI call, after a missing-environment launch mistake).
+- [x] Observed lock object name:
+      `validation/live-acceptance-20261027T130000Z-m1live-r2/terraform.tfstate.lock` (run 2;
+      run 1: `validation/live-acceptance-20261027T120000Z-m1live/terraform.tfstate.lock`).
+      Post-run `object head` on both lock keys: 404 — no surviving lock, nothing to clean up.
+- [x] Version ids observed (run 2 state key): noncurrent `44283fe0-9b55-4cab-9484-f6787d3aad9a`
+      (selected, oldest) and current `60c57741-2f06-401e-b547-3adaf7d0d2ad`; restore-test object
+      version `f9d17a2a-33de-411d-8569-5741d984c803`; restored snapshot identity: lineage
+      `6ffcea23-17e3-187a-7ed1-043f6ca21fab`, serial 1, verified byte-identical (`cmp`) and
+      readable via scratch `terraform state pull`. Full version list (including the 5 transient
+      lock versions and their delete markers left by Terraform's normal unlock) in
+      `r2-state-recovery.log` context + bucket listings recorded this session.
+- [x] STATE-RECOVERY evidence retained at: `/Users/eswr/secure/evidence/m1live-20261027T120000Z/r2-state-recovery.log`
+      (run 2, PASS). Run-1 failure evidence: `state-recovery.log` plus the script-preserved
+      terraform root at
+      `/var/folders/zl/jwfjhy8j1vd2_jbtvtq30km80000gn/T/eventforge-validation-evidence/20261027T120000Z-m1live-restore-20261027T124951Z/terraform-root`.
+- [x] TF_VALIDATION_EXPECTED_KMS_KEY_ID used (transcribed from tfvars):
+      `ocid1.key.oc1.ap-hyderabad-1.gfvn7rbsaab4m.abuhsljr…bcyq` (masked here; full value taken
+      from the gitignored `infra/bootstrap/terraform.auto.tfvars` and matched the bucket's
+      `kms-key-id` exactly on every check).
+- [x] TF_VALIDATION_KMS_COMPARTMENT_OCID used (transcribed from tfvars): the tenancy root
+      compartment (tenancy OCID, as committed in repo docs) — `rust-api-secrets` vault's compartment.
+- [x] Bucket preconditions verified live (NoPublicAccess / versioning / CMK bound + ENABLED):
+      PASS — manual `os bucket get` (`NoPublicAccess`, `Enabled`, exact expected `kms-key-id`)
+      before each run and enforced by both scripts pre-mutation (fail-closed).
+- [x] KMS ids confirmed: bucket `kms-key-id` == tfvars CMK == `kms management key get` `id`
+      through the vault's actual management endpoint, `lifecycle-state` `ENABLED` (script gate).
+      Observation recorded: `os object head` does not expose a `kms-key-id` header for these
+      objects (bucket-level binding is the verified control); run-1 keys' state object and the
+      bootstrap state object behave identically.
+- [x] Vault management endpoint used (as reported by `kms management vault list`):
+      `https://gfvn7rbsaab4m-management.kms.ap-hyderabad-1.oci.oraclecloud.com` (vault
+      `rust-api-secrets`, ACTIVE, root compartment).
+- [x] IAM-DENIAL: NOT_RUN (deferred to federation phase — §9).
+- [x] Cleanup performed: **none** — both RUN_ID prefixes (`validation/live-acceptance-…m1live/`,
+      `validation/live-acceptance-…m1live-r2/`, `validation/restore-test-…m1live-r2/`) retained
+      per §10; bucket-wide inventory this session confirms nothing exists outside those three
+      prefixes. Deletion requires a separate approval naming the RUN_IDs.
+- [x] Nothing touched `bootstrap/`, `platform/`, `frontend/`, or any production key (read-only
+      reads aside); no IAM, compute, network, MySQL, LB, or Cloudflare resource involved.
