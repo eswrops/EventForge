@@ -55,15 +55,18 @@ locals {
 resource "oci_identity_policy" "objectstorage_kms" {
   compartment_id = var.tenancy_ocid
   name           = "eventforge-objectstorage-kms"
-  description    = "Permits the Object Storage service to use the state-bucket master encryption key."
+  description    = "Permits Object Storage to use the state-bucket key and execute its lifecycle policy."
 
   # The service subject is hyphenated (objectstorage-<region>) per the OCI
   # policy reference; without this statement, creating a bucket with
   # kms_key_id fails on the service side because Object Storage cannot use the
   # Vault key. Key permissions are scoped to the key's own compartment (which
   # may be the tenancy root) and pinned to the exact key OCID.
+  # Lifecycle execution additionally needs object-family access, restricted to
+  # the state bucket only, so noncurrent versions can expire as configured.
   statements = [
     "Allow service objectstorage-${var.region} to use keys in ${local.kms_policy_location} where target.key.id = '${var.state_bucket_kms_key_id}'",
+    "Allow service objectstorage-${var.region} to manage object-family in compartment id ${var.compartment_ocid} where target.bucket.name = '${var.state_bucket_name}'",
   ]
 }
 
