@@ -39,7 +39,7 @@
     "APPLICATION_DEPLOYMENT": "NOT_RUN",
     "NETWORK_SECURITY_ENFORCEMENT": "PASS (2026-10-27 post-apply live inspection: effective posture closed \u2014 no public 8080/3306; NSG attachment deliberately deferred to the separately reviewed ingress-enablement gate)",
     "M1_LOCAL_DECLARATIVE_REPRODUCIBILITY": "PASS (imported-resource declarations tracked in Git; clean-checkout offline plan = 37 no-op addresses, zero changes)",
-    "LOCAL_DEPLOYMENT_TOOLING": "PASS after review/merge of the m1-local-acceptance PR (behavioral guard tests added)"
+    "LOCAL_DEPLOYMENT_TOOLING": "PASS \u2014 reviewed and merged via PR #36 (4/4 required checks); behavioral guard tests green in CI"
   },
   "import_execution": {
     "date": "2026-10-27",
@@ -166,7 +166,15 @@
   "declarative_reproducibility": {
     "tracked": "infra/platform/imported_resources.tf (7 blocks / 8 addresses, prevent_destroy, narrow ignores, no NSG attachment)",
     "values": "git-ignored imported.auto.tfvars (template imported.auto.tfvars.example)",
-    "test": "fresh clone + protected inputs + offline state copy: terraform plan -refresh=false \u2192 No changes (37 no-op, zero creates/updates/destroys)"
+    "test": "fresh clone + protected inputs + offline state copy: terraform plan -refresh=false \u2192 No changes (37 no-op, zero creates/updates/destroys)",
+    "final_commit_verification": "re-run on merged main (e93bfc4): fresh clone + protected inputs + offline state copy \u2192 37 no-op, zero changes"
   },
-  "git_revision_at_acceptance": ""
+  "git_revision_at_acceptance": "e93bfc44efe9e68146a17603f21d733e538a9d1a",
+  "acceptance_pr": {
+    "number": 36,
+    "url": "https://github.com/eswrops/EventForge/pull/36",
+    "squash_merge_commit": "e93bfc44efe9e68146a17603f21d733e538a9d1a",
+    "required_checks": "4/4 PASS",
+    "merged": "2026-10-27"
+  }
 }
