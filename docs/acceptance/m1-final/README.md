@@ -15,8 +15,9 @@ records) are preserved unmodified as historical snapshots.
 | [release-operations.md](release-operations.md) | Phase 8 evidence — exit gate **RELEASE-OPERATIONS = PREPARED** |
 | [remote-state.md](remote-state.md) | Phase 4 — state-identity root-cause verification for the executed bootstrap migration (lineage/serial reset), offline reproduction, regression tests, preserved ACCEPT_TRANSITION decision |
 | [terraform-upstream-issue.md](terraform-upstream-issue.md) | Sanitized upstream Terraform issue draft (migration metadata reset) |
-| [live-backend-validation-approval.md](live-backend-validation-approval.md) | Hardened (NOT executed) authorization package for live STATE-LOCKING, STATE-CONTENTION, and STATE-RECOVERY validation on RUN_ID-confined disposable keys; IAM-DENIAL deferred to the federation phase. Merged as `a4e0904`, safety-patched as `938ff89`, OCI CLI response contracts fixed as `2e2380a` |
-| remaining Phase 9 files | written as their phases execute (architecture, github-security, oci-bootstrap, workload-federation, imports, network-security, monitoring, cost-and-free-tier, acceptance-checklist, blockers, m1-final-report.json) |
+| [live-backend-validation-approval.md](live-backend-validation-approval.md) | Executed authorization package (§12 record filled 2026-10-27) for live STATE-LOCKING, STATE-CONTENTION, and STATE-RECOVERY validation on RUN_ID-confined disposable keys; IAM-DENIAL deferred to the federation phase. Merged as `a4e0904`, safety-patched as `938ff89`, OCI CLI response contracts fixed as `2e2380a`, copy contract fixed as `8d42411`, execution stamped at `ba4be3a` |
+| [workload-federation.md](workload-federation.md) | Phase 2 preparation — live OIDC/environment verification, the two independent token-exchange client configurations, permission separation, revocation/rotation, and the sanitized positive/negative test plan. **PREPARED — awaiting OCI-FEDERATION approval** |
+| remaining Phase 9 files | written as their phases execute (architecture, github-security, oci-bootstrap, imports, network-security, monitoring, cost-and-free-tier, acceptance-checklist, blockers, m1-final-report.json) |
 
 ## Gate status
 
@@ -25,8 +26,8 @@ records) are preserved unmodified as historical snapshots.
 | GH-SECURITY (Phase 1) | **PASS** — lockdown applied under operator approval and independently re-verified live: 4 required contexts strict+admin-enforced, linear history, 0 approvals (deliberate solo-maintainer config), strict SHA-pinned allowlist, read-only workflow tokens, both environments protected, OIDC inspection re-run PASS (run 40453021102), docs-only PR merge path proven (PRs #10/#11), direct push to main rejected by the protected-branch hook |
 | BOOTSTRAP-PLAN (Phase 2) | **PASS (Stage 1)** — executed under explicit operator approval: the dedicated state CMK was created (`state_bucket_kms_key_id` recorded in the tfvars; checklist step 7 resolved), and the bucket `eventforge-tfstate-prod` is live with `NoPublicAccess`, versioning Enabled, and CMK-bound. Exactly the 8 Stage-1 resources planned (preflight 19 PASS / 0 unexpected FAIL; checksum-verified Terraform 1.12.2). Stage-2 workload policies remain gated behind `enable_workload_policies = false` pending federation |
 | OCI-BOOTSTRAP (Phase 3) | **PASS (Stage 1)** — 8/8 planned creates applied and verified live (state bucket, backups bucket, version lifecycle, Object Storage KMS policy, dynamic group, instance-backup policy, ONS topic + subscription). Stage-2 (2 GitHub workload-policy creates) is pending the first live token exchange (federation steps 10–11) |
-| OCI-REMOTE-STATE (Phase 4) | **PARTIAL (2026-10-27)** — bootstrap migration executed under STATE-MIGRATION approval; the resulting lineage/serial reset was root-caused offline in Terraform 1.12.2 (see [remote-state.md](remote-state.md)) with regression tests committed under `tests/terraform-upstream/`; ACCEPT_TRANSITION preserved (no rewrite, no re-migration). Live STATE-LOCKING/CONTENTION/RECOVERY remain NOT_RUN; IAM-DENIAL deferred to the federation phase — hardened approval package: [live-backend-validation-approval.md](live-backend-validation-approval.md) |
-| OCI-FEDERATION (Phase 5) | BLOCKED — needs trusts/clients (steps 10–11); `production` subject not yet inspected in its environment |
+| OCI-REMOTE-STATE (Phase 4) | **PASS (2026-10-27, disposable keys)** — bootstrap migration accepted earlier under STATE-MIGRATION approval (lineage/serial reset root-caused in [remote-state.md](remote-state.md), `tests/terraform-upstream/` regression tests, ACCEPT_TRANSITION preserved). Live backend validation **executed** per [live-backend-validation-approval.md](live-backend-validation-approval.md) §12: STATE-LOCKING PASS, STATE-CONTENTION PASS, STATE-RECOVERY PASS on RUN_ID `20261027T130000Z-m1live-r2` from the COPY CONTRACT FIX 1 revision (`8d42411`, stamped `ba4be3a`); run 1 (`20261027T120000Z-m1live`) passed LOCKING+CONTENTION and its RECOVERY failure (CLI 3.95.1 rejects `os object copy --source-bucket` at argument parsing — no API call, no data written) was root-caused and fixed by PR #28 before the fresh-RUN_ID re-run. Validation keys retained; cleanup separately approved only. IAM-DENIAL remains NOT_RUN (deferred to the federation phase by design — §9) |
+| OCI-FEDERATION (Phase 5) | **PREPARED (2026-10-27)** — [workload-federation.md](workload-federation.md) records the live verifications (numeric IDs, both environments, immutable subjects) and the exact two-client trust configuration to create. The inspection workflow now runs an independent `inspect (production)` job (PR #31) closing the last environment-coverage gap; its `Result: PASS` must be recorded before the apply-side trust is configured. Trusts/clients are created only after the explicit OCI-FEDERATION approval; no Stage-2 IAM apply in this phase |
 | OCI-IMPORTS (Phase 6) | BLOCKED — needs remote state |
 | M1C-PLATFORM (Phase 7) | BLOCKED — needs imports |
 | RELEASE-OPERATIONS (Phase 8) | **PREPARED** — 12-scenario offline dry-run suite, 5 real installer defects found and fixed (PR #13) |
@@ -34,19 +35,22 @@ records) are preserved unmodified as historical snapshots.
 
 ## Next operator action
 
-1. Approve and execute the hardened live backend validation package
-   [live-backend-validation-approval.md](live-backend-validation-approval.md)
-   (Option A: operator workstation, `TF_OCI_AUTH=APIKey` +
-   `TF_OCI_PROFILE=DEFAULT`, pinned Terraform 1.12.2 via `TERRAFORM_BIN`, and
-   the package's concrete RUN_ID), recording observations in its §12 execution
-   record. STATE-LOCKING, STATE-CONTENTION, and STATE-RECOVERY stay NOT_RUN
-   until then; IAM-DENIAL stays deferred to the federation phase.
-2. Federation steps 10–11 of
-   [../m1b-bootstrap/operator-checklist.md](../m1b-bootstrap/operator-checklist.md)
-   (trusts + clients), then the gated Stage-2 `enable_workload_policies` apply.
+1. **OCI-FEDERATION approval** (Phase 5 of the M1-final mission): review the prepared
+   federation package — exact trust conditions, the two independent token-exchange clients
+   (`eventforge-github-plan` / `eventforge-github-apply`), RPST exchange settings, separate
+   permissions, revocation/rotation procedure, and the sanitized positive/negative test plan —
+   recorded in [workload-federation.md](workload-federation.md). After approval, create only the
+   two reviewed trust/client configurations and perform the first live token exchanges
+   (checklist steps 10–11 of
+   [../m1b-bootstrap/operator-checklist.md](../m1b-bootstrap/operator-checklist.md)), verifying
+   the actual claim mapping before any Stage-2 IAM apply.
+2. Confirm the **PENDING** ONS email subscription for `eswr.ops@gmail.com` (topic
+   `eventforge-operations`, created 2026-10-27T06:07Z) — notification delivery must not be marked
+   PASS until the confirmation email is clicked and delivery is verified.
+3. Cleanup of the retained validation keys (`validation/live-acceptance-20261027T120000Z-m1live/`,
+   `validation/live-acceptance-20261027T130000Z-m1live-r2/`,
+   `validation/restore-test-20261027T130000Z-m1live-r2/`) remains a separately approved
+   operation naming the RUN_IDs (package §10).
 
-Housekeeping: checklist steps 7–9 have executed (CMK created, Stage-1 applied and
-verified) but their approval boxes in
-[../m1b-bootstrap/operator-checklist.md](../m1b-bootstrap/operator-checklist.md) are
-still unfilled — the operator should complete those records from the session logs so
-the approval trail matches what ran.
+Housekeeping resolved: checklist steps 7–9 are now recorded from actual operator evidence (PR
+#29); the Phase-0 state-recovery partial-apply claim is corrected (PR #28).
