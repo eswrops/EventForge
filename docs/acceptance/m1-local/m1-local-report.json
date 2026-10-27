@@ -36,7 +36,10 @@
     "GITHUB_STAGE_2_IAM": "DEFERRED",
     "IAM_DENIAL": "NOT_RUN",
     "ONS_SUBSCRIPTION_CONFIRMATION": "BLOCKED",
-    "APPLICATION_DEPLOYMENT": "NOT_RUN"
+    "APPLICATION_DEPLOYMENT": "NOT_RUN",
+    "NETWORK_SECURITY_ENFORCEMENT": "PASS (2026-10-27 post-apply live inspection: effective posture closed \u2014 no public 8080/3306; NSG attachment deliberately deferred to the separately reviewed ingress-enablement gate)",
+    "M1_LOCAL_DECLARATIVE_REPRODUCIBILITY": "PASS (imported-resource declarations tracked in Git; clean-checkout offline plan = 37 no-op addresses, zero changes)",
+    "LOCAL_DEPLOYMENT_TOOLING": "PASS after review/merge of the m1-local-acceptance PR (behavioral guard tests added)"
   },
   "import_execution": {
     "date": "2026-10-27",
@@ -142,5 +145,28 @@
     "federation": "Oracle SR \u2192 exchange probe workflows \u2192 record var_name/var_ext_* claims \u2192 Stage-2 IAM",
     "release_path": "GitHub-releases installer remains PREPARED-only; a tested local-release mechanism is a separate later mechanism",
     "m2": "not started (rule 16)"
-  }
+  },
+  "effective_network_security": {
+    "inspected": "2026-10-27 post-apply, read-only",
+    "nsg_attachments": "none (0 NSGs on both VM VNICs, the LB, and MySQL) \u2014 created NSGs govern nothing until attached",
+    "governing_rules": "subnet security lists: app=TCP22 from 49.207.205.137/32 only; lb=80/443 public but zero listeners; db=1522/3306 from 10.0.2.0/24 only",
+    "public_8080": "BLOCKED",
+    "public_3306": "BLOCKED",
+    "lb_to_app": "BLOCKED (no listener; no app-SL rule for the LB subnet)",
+    "app_to_mysql": "WORKS (db SL admits 10.0.2.0/24)",
+    "egress": "unrestricted via Internet Gateway route",
+    "note_ssh_drift": "live app security list pins 49.207.205.137/32 while reviewed operator input pins 49.207.214.221/32 \u2014 pre-existing rule, untouched; operator must update the SL or use the (unattached) app NSG at the ingress gate",
+    "nsg_attachment": "NOT required for M1-LOCAL acceptance; separately reviewed update required before enabling API ingress (see security.md)"
+  },
+  "cost_quota_verification": {
+    "verified_read_only": "2 alarms enabled (oci_computeagent / oci_lbaas queries), topic ACTIVE, ONS email subscription PENDING, budget eventforge-monthly (tenancy root \u2192 Test compartment, $5, 3 alert rules), bucket lifecycle 30-day noncurrent DELETE, state CMK ENABLED",
+    "quota": "free E2.1.Micro allocation fully consumed (available=0, used=2 in AD-1) \u2014 no further free micro compute",
+    "not_verifiable_read_only": "actual billed cost (usage API requires a saved-query write; cost-report bucket not accessible) \u2014 Always-Free table is an assessment, not a billing guarantee"
+  },
+  "declarative_reproducibility": {
+    "tracked": "infra/platform/imported_resources.tf (7 blocks / 8 addresses, prevent_destroy, narrow ignores, no NSG attachment)",
+    "values": "git-ignored imported.auto.tfvars (template imported.auto.tfvars.example)",
+    "test": "fresh clone + protected inputs + offline state copy: terraform plan -refresh=false \u2192 No changes (37 no-op, zero creates/updates/destroys)"
+  },
+  "git_revision_at_acceptance": ""
 }

@@ -35,7 +35,32 @@ additive platform plan — NSGs, NSG rules, alarms (well inside the free allocat
   status in [blockers.md](blockers.md) (budget alert recipients receive mail directly; the
   ONS subscription covers alarms).
 
-## Quota findings
+## Quota findings (live limits API, 2026-10-27 post-apply)
 
-No quota constraints encountered: NSG/rule counts, alarm count, and budget count are far below
-service limits for the region; no limit-increase request is needed for the planned plan.
+- **Compute free-tier quota is fully consumed**: `standard-e2-micro-core-count` in AD-1 shows
+  `available=0, used=2`. No additional free micro VM can be created in this region/AD — any
+  M2 compute provisioning needs a different shape (billable) or a quota change. The two
+  running API hosts occupy the entire free allocation.
+- MySQL free-tier and LB limits were not precisely queryable with the available read-only
+  limit names (`mysql-2-count` reports available=0/used=0 while the ACTIVE `MySQL.Free`
+  system exists; `lb-10mbps-micro-count` rejected by the API) — recorded as unverified; the
+  running estate demonstrates the quota is sufficient for one LB + one MySQL system.
+- NSG/rule/alarm/budget counts are far below service limits; no limit increase is needed.
+
+## Verification boundaries (what was and was not proven)
+
+Verified read-only 2026-10-27: 2 alarms enabled with valid metric namespaces
+(`oci_computeagent` CPU query, `oci_lbaas` unhealthy-backend query) → topic
+`eventforge-operations` **ACTIVE**; ONS email subscription `eswr.ops@gmail.com` still
+**PENDING** confirmation (alarm delivery must not be marked PASS); budget `eventforge-monthly`
+at tenancy root targeting the Test compartment, amount 5, three alert rules
+(75/100 actual, 100 forecast) to `eswr.ops@gmail.com`; state-bucket lifecycle 30-day
+noncurrent-version DELETE; state CMK **ENABLED**.
+
+Not verifiable read-only with this CLI setup: **actual billed cost** — the usage/cost
+summaries require creating a saved query (a tenancy write, not authorized by this mission)
+and the tenancy cost-report bucket is not accessible via object storage. The Always-Free
+eligibility table above is an assessment from resource counts and must not be read as a
+billing guarantee; the $5 monthly budget with its three alert rules is the runtime tripwire
+(email delivery for budget alerts is separate from the ONS alarm subscription and likewise
+requires a real alert to prove).
