@@ -20,6 +20,12 @@ state_bucket_kms_key_id = "ocid1.key.oc1..replace-me"
 # compartment OCID; the policy location form is derived automatically.
 kms_key_compartment_ocid = "ocid1.tenancy.oc1..replace-me"
 
+# Stage 2 switch: leave false for the first (Stage 1) apply so the workload
+# policies stay uncreated; flip to true only after the live token exchange has
+# confirmed the exchanged principal's claim mapping
+# (docs/acceptance/m1b-bootstrap/federation.md §C).
+enable_workload_policies = false
+
 # Create separate statements from the OCI identity-domain federation setup.
 # Both workload identities must be bound to the expected repository/environment
 # in the trust configuration and constrain request.principal attributes here.

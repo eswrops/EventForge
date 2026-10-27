@@ -81,7 +81,13 @@ resource "oci_identity_policy" "eventforge_instance_backups" {
   ]
 }
 
+# Stage 2 resources: both workload policies constrain the exchanged principal
+# with draft claim keys (federation.md §C) that are only verified by the first
+# live token exchange. Until then enable_workload_policies stays false so no
+# unverified principal-claim mapping can reach an apply.
 resource "oci_identity_policy" "github_oidc_plan" {
+  count = var.enable_workload_policies ? 1 : 0
+
   compartment_id = var.tenancy_ocid
   name           = "eventforge-github-oidc-plan"
   description    = "Read-only OCI access plus Terraform state locking for the constrained GitHub production-plan workload."
@@ -89,6 +95,7 @@ resource "oci_identity_policy" "github_oidc_plan" {
 }
 
 resource "oci_identity_policy" "github_oidc_apply" {
+  count          = var.enable_workload_policies ? 1 : 0
   compartment_id = var.tenancy_ocid
   name           = "eventforge-github-oidc"
   description    = "Least-privilege apply authorization for the constrained GitHub production workload."

@@ -96,6 +96,12 @@ variable "github_apply_oidc_policy_statements" {
   }
 }
 
+variable "enable_workload_policies" {
+  type        = bool
+  default     = false
+  description = "Stage 2 switch. The GitHub workload policy statements constrain the exchanged principal with draft claim keys that only the first live token exchange can verify; keep this false for the Stage 1 apply and flip it only after federation.md §C claim mapping is confirmed."
+}
+
 variable "notification_email" {
   type        = string
   description = "Email endpoint for initial OCI alert subscription."
