@@ -123,6 +123,60 @@ m1_verify_approval_record "$work/record-complete.md" "MYSQL-NSG-IAM" \
   "oci_identity_policy.mysql_vnic_update" "${stmts[0]}" "${stmts[1]}" "iam/terraform.tfstate absent" \
   || fail "a complete statement-bound record must validate"
 
+# ------------------------------------------- SCOPE_DECISION machine enforcement
+# The tenancy-wide VNIC scope acceptance must be an EXACTLY-ONE standalone
+# line `SCOPE_DECISION: ACCEPT_TENANCY_WIDE_VNIC`; every malformed form is a
+# negative regression fixture here.
+dec() { printf '%s\n' "$@"; }
+declare -a bad_decisions=(
+  ""                                                         # missing line entirely
+  "SCOPE_DECISION: <ACCEPT_TENANCY_WIDE_VNIC>"               # placeholder
+  "SCOPE_DECISION: ACCEPT_TENANCY_WIDE_VNIC (I think)"       # trailing commentary
+  "SCOPE_DECISION: ORACLE_FIRST"                             # deferred to Oracle
+  "SCOPE_DECISION: DECLINED"                                 # declined
+  "SCOPE_DECISION: accept_tenancy_wide_vnic"                 # wrong case
+  "SCOPE_DECISION: ACCEPT_TENANCY_WIDE_VNIC extra-token"     # appended token
+  "SCOPE_DECISION:ACCEPT_TENANCY_WIDE_VNIC"                  # missing space — not the reviewed form
+  "  > SCOPE_DECISION: ACCEPT_TENANCY_WIDE_VNIC"             # decision quoted inside template commentary
+)
+for d in "${bad_decisions[@]}"; do
+  if [[ -z "$d" ]]; then dec "GATE: MYSQL-NSG-IAM" > "$work/dec.md"; else dec "GATE: MYSQL-NSG-IAM" "$d" > "$work/dec.md"; fi
+  if m1_verify_scope_decision "$work/dec.md" 2>/dev/null; then
+    fail "scope decision must be refused: [${d:-<missing>}]"
+  fi
+done
+
+# Multiple decisions — identical or conflicting — are each refused.
+dec "GATE: MYSQL-NSG-IAM" "SCOPE_DECISION: ACCEPT_TENANCY_WIDE_VNIC" \
+  "SCOPE_DECISION: ACCEPT_TENANCY_WIDE_VNIC" > "$work/dec-dup.md"
+m1_verify_scope_decision "$work/dec-dup.md" 2>/dev/null \
+  && fail "two identical SCOPE_DECISION lines must be refused"
+dec "GATE: MYSQL-NSG-IAM" "SCOPE_DECISION: ACCEPT_TENANCY_WIDE_VNIC" \
+  "SCOPE_DECISION: DECLINED" > "$work/dec-conflict.md"
+m1_verify_scope_decision "$work/dec-conflict.md" 2>/dev/null \
+  && fail "conflicting SCOPE_DECISION lines must be refused"
+
+# Positive: exactly one standalone top-level line validates; the decision
+# may not be inherited from commentary that merely names the option.
+dec "GATE: MYSQL-NSG-IAM" "commentary: ORACLE_FIRST and DECLINED are rejected" \
+  "SCOPE_DECISION: ACCEPT_TENANCY_WIDE_VNIC" > "$work/dec-ok.md"
+m1_verify_scope_decision "$work/dec-ok.md" \
+  || fail "exactly one standalone ACCEPT_TENANCY_WIDE_VNIC decision must validate"
+echo "ok: SCOPE_DECISION enforcement (unit fixtures)"
+
+# Behavioral: the apply must refuse at the scope-decision gate — placed in the
+# OFFLINE section, before any live access — when the record omits the
+# decision, and must reach the later gates when the record carries it.
+apply_script="$repo_root/scripts/local/m1-iam-apply.sh"
+grep -q 'm1_verify_scope_decision "$approval_record"' "$apply_script" \
+  || fail "apply must validate the scope decision before live access"
+scope_line="$(grep -n 'PASS "scope-decision"' "$apply_script" | cut -d: -f1)"
+record_line="$(grep -n 'PASS "approval-record"' "$apply_script" | cut -d: -f1)"
+recheck_line="$(grep -n 'offline-contract-recheck" "saved plan revalidated' "$apply_script" | cut -d: -f1)"
+[[ -n "$scope_line" ]] || fail "apply must carry a scope-decision gate"
+(( record_line < scope_line && scope_line < recheck_line )) \
+  || fail "the scope-decision gate must sit between the approval-record gate and the contract recheck"
+
 # ------------------------------------------------- state-key absence proof (fail closed)
 # The proof must never infer absence from an authorization/service error, an
 # unparseable listing, historical object versions, or delete markers.
@@ -212,6 +266,7 @@ STUB
   cat > "$work/recheck-record.md" <<EOF
 GATE: MYSQL-NSG-IAM
 APPROVER: test-operator
+SCOPE_DECISION: ACCEPT_TENANCY_WIDE_VNIC
 COMMIT: $commit
 PLAN SHA-256: $recheck_sha
 STATEMENT 1: ${rstmts[0]}
@@ -229,6 +284,21 @@ EOF
   grep -q "offline-contract-recheck" "$work/recheck.err" \
     || { echo "recheck refusal output:"; cat "$work/recheck.err" >&2; fail "refusal must name the offline-contract-recheck gate"; }
   echo "ok: pre-execution contract recheck (behavioral)"
+
+  # Behavioral negative: the SAME complete record without the SCOPE_DECISION
+  # line must be refused at the scope-decision gate — before the contract
+  # recheck, and therefore before any live access.
+  grep -v '^SCOPE_DECISION:' "$work/recheck-record.md" > "$work/recheck-record-nodecision.md"
+  if ( cd "$work" && M1_TERRAFORM_BIN="$stub_tf/terraform" \
+        M1_EVIDENCE_DIR="$work/evidence3" M1_EVIDENCE_ROOT="$work/evidence-root3" \
+        M1_IAM_APPLY_APPROVED_BY="test-operator" \
+        "$repo_root/scripts/local/m1-iam-apply.sh" "$work/recheck-plan.tfplan" \
+        "$work/recheck-metadata.json" "$work/recheck-record-nodecision.md" 2>"$work/nodecision.err" ); then
+    fail "apply must refuse a record without the SCOPE_DECISION acceptance"
+  fi
+  grep -q "scope-decision" "$work/nodecision.err" \
+    || { echo "nodecision refusal output:"; cat "$work/nodecision.err" >&2; fail "refusal must name the scope-decision gate"; }
+  echo "ok: scope-decision enforcement (behavioral)"
 else
   echo "skip: pre-execution recheck behavioral test (operator tfvars absent — CI checkout)"
 fi

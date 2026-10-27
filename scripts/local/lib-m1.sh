@@ -319,6 +319,38 @@ m1_verify_approval_record() { # m1_verify_approval_record <record-file> <gate-ma
   fi
 }
 
+# Machine-enforced risk acceptance for the MYSQL-NSG-IAM blocker: the
+# effective scope of `eventforge-mysql-vnic-update` is TENANCY-WIDE via policy
+# inheritance (no documented root-only form exists — b5-mysql-nsg-diagnosis.md
+# §8). Executing the reviewed plan therefore requires the operator's explicit
+# written acceptance, validated mechanically BEFORE any live access: the
+# record must carry EXACTLY ONE standalone line
+#   SCOPE_DECISION: ACCEPT_TENANCY_WIDE_VNIC
+# Refused: a missing line, a placeholder, ORACLE_FIRST, DECLINED, multiple or
+# conflicting decisions, a decision quoted inside template commentary, or any
+# trailing text on the line. Acceptance is never inferred from commentary,
+# environment variables, or a passing policy check.
+m1_verify_scope_decision() { # m1_verify_scope_decision <record-file>
+  local file="$1"
+  [[ -f "$file" ]] || { echo "Approval record missing: $file" >&2; return 1; }
+  local count
+  count="$(grep -c 'SCOPE_DECISION:' "$file" || true)"
+  if [[ "$count" -ne 1 ]]; then
+    if [[ "$count" -eq 0 ]]; then
+      echo "$file carries no 'SCOPE_DECISION:' line — the explicit tenancy-wide VNIC scope acceptance is REQUIRED (execution refused)" >&2
+    else
+      echo "$file carries $count 'SCOPE_DECISION:' lines — exactly ONE explicit decision is required; multiple or conflicting decisions refuse execution" >&2
+      grep -n 'SCOPE_DECISION:' "$file" >&2
+    fi
+    return 1
+  fi
+  if ! grep -Eq '^SCOPE_DECISION:[[:space:]]+ACCEPT_TENANCY_WIDE_VNIC[[:space:]]*$' "$file"; then
+    echo "$file's decision line is invalid: it must be a standalone top-level line reading exactly 'SCOPE_DECISION: ACCEPT_TENANCY_WIDE_VNIC' (no placeholder, no ORACLE_FIRST, no DECLINED, no trailing commentary, not quoted inside template text). Found:" >&2
+    grep -n 'SCOPE_DECISION:' "$file" >&2
+    return 1
+  fi
+}
+
 # ---------------------------------------------------------------- safe plan
 
 m1_run_safe_plan_policy() { # m1_run_safe_plan_policy <plan-json> → 0 if policy PASS

@@ -11,7 +11,13 @@
 # resource addresses, the expected initial state (iam/terraform.tfstate
 # absent), and an APPROVER: line matching the M1_IAM_APPLY_APPROVED_BY
 # environment attestation — authorization is never granted by an environment
-# variable alone or by a passing policy check. The apply refuses when the
+# variable alone or by a passing policy check. Because the effective scope of
+# `eventforge-mysql-vnic-update` is tenancy-wide via policy inheritance (no
+# documented root-only form exists), the record must additionally carry
+# EXACTLY ONE explicit decision line — `SCOPE_DECISION:
+# ACCEPT_TENANCY_WIDE_VNIC` — validated before any live access; a missing,
+# placeholder, ORACLE_FIRST, DECLINED, multiple/conflicting, or
+# commentary-copied decision refuses execution. The apply refuses when the
 # remote state key exists (ownership moved since review), never generates a
 # new plan, never uses -auto-approve, retains locking, and on any failure
 # consumes the approval with preserved logs and NO retry or rollback.
@@ -104,6 +110,17 @@ if m1_verify_approval_record "$approval_record" "MYSQL-NSG-IAM" "${record_requir
 else
   fail_gate approval-record \
     "invalid or missing approval record ($approval_record): it must contain 'GATE: MYSQL-NSG-IAM', the plan SHA-256 $plan_sha, commit $commit, both resource addresses, both reviewed statements verbatim, '$M1_IAM_KEY absent', and an APPROVER: line"
+fi
+
+# Machine-enforced risk acceptance (blocker): the tenancy-wide effective scope
+# of `eventforge-mysql-vnic-update` must be explicitly accepted with EXACTLY
+# ONE standalone `SCOPE_DECISION: ACCEPT_TENANCY_WIDE_VNIC` line in the record
+# — validated here, in the OFFLINE section, before any live access.
+if m1_verify_scope_decision "$approval_record"; then
+  m1_check PASS "scope-decision" "ACCEPT_TENANCY_WIDE_VNIC recorded (exactly one explicit decision)"
+else
+  fail_gate scope-decision \
+    "the approval record lacks exactly one standalone 'SCOPE_DECISION: ACCEPT_TENANCY_WIDE_VNIC' line — missing decisions, placeholders, ORACLE_FIRST, DECLINED, multiple/conflicting decisions, decisions quoted in template commentary, and lines with trailing text are all refused; see the scope analysis in the approval template"
 fi
 
 # Independent pre-execution revalidation: render the saved plan (.tfplan — the
