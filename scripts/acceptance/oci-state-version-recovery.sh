@@ -23,6 +23,10 @@ vf_require_approved_backend
 vf_require_terraform
 vf_require_auth
 
+# Read-only bucket encryption/visibility preconditions must hold before any
+# mutation (this script writes one object).
+vf_require_bucket_preconditions
+
 # The only permitted source is this run's retained live-acceptance state; the
 # only permitted destination is this run's restore-test key.
 if [[ -n "${TF_RESTORE_SOURCE_KEY:-}" && "$TF_RESTORE_SOURCE_KEY" != "$VALIDATION_STATE_KEY" ]]; then
@@ -39,23 +43,31 @@ fi
 
 # The list-object-versions response data items carry name, version-id,
 # is-delete-marker, and time-created (there is no is-current field); the
-# current version was obtained from the object head above.
-versions_json="$(oci "${VALIDATION_OCI_ARGS[@]}" os object list-object-versions \
-  --bucket-name "$VALIDATION_LIB_APPROVED_BUCKET" --prefix "$VALIDATION_STATE_KEY")"
-noncurrent_tsv="$(jq -r --arg key "$VALIDATION_STATE_KEY" --arg cur "$current_version_id" '
-  [.data[]
-   | select(."name" == $key and ."is-delete-marker" != true and ."version-id" != null and ."version-id" != $cur)]
+# current version was obtained from the object head above. The listing is
+# fully paginated with --all and must succeed: a listing failure is never
+# interpreted as an empty version history.
+if ! versions_json="$(oci "${VALIDATION_OCI_ARGS[@]}" os object list-object-versions \
+    --bucket-name "$VALIDATION_LIB_APPROVED_BUCKET" --prefix "$VALIDATION_STATE_KEY" --all)"; then
+  vf_fail "The object-version listing for $VALIDATION_STATE_KEY errored (authorization, authentication, network, or pagination problem); refusing to select a snapshot from an unverifiable history."
+fi
+if ! noncurrent_tsv="$(jq -r --arg key "$VALIDATION_STATE_KEY" --arg cur "$current_version_id" '
+  (if (.data | type) == "array" then .data else error("missing data array") end)
+  | map(select(."name" == $key and ."is-delete-marker" != true and ."version-id" != null and ."version-id" != $cur))
   | sort_by(."time-created", ."version-id")[]
-  | [."time-created", ."version-id"] | @tsv' <<<"$versions_json")"
+  | [."name", ."time-created", ."version-id"] | @tsv' <<<"$versions_json")"; then
+  vf_fail "Malformed object-version response for $VALIDATION_STATE_KEY; refusing to interpret it."
+fi
 
 chosen_version_id="${TF_RESTORE_VERSION_ID:-}"
+chosen_version_name=""
 chosen_version_time=""
 version_found=false
-while IFS="$(printf '\t')" read -r version_time version_id; do
+while IFS="$(printf '\t')" read -r version_name version_time version_id; do
   [[ -n "$version_id" ]] || continue
   if [[ -n "$chosen_version_id" ]]; then
     if [[ "$version_id" == "$chosen_version_id" ]]; then
       version_found=true
+      chosen_version_name="$version_name"
       chosen_version_time="$version_time"
       break
     fi
@@ -63,6 +75,7 @@ while IFS="$(printf '\t')" read -r version_time version_id; do
     # Default selection: the oldest noncurrent version, deterministically.
     chosen_version_time="$version_time"
     chosen_version_id="$version_id"
+    chosen_version_name="$version_name"
   fi
 done <<<"$noncurrent_tsv"
 
@@ -71,6 +84,11 @@ if [[ -z "$chosen_version_id" ]]; then
 fi
 if [[ -n "${TF_RESTORE_VERSION_ID:-}" && "$version_found" != true ]]; then
   vf_fail "TF_RESTORE_VERSION_ID '${TF_RESTORE_VERSION_ID}' is not a noncurrent version of $VALIDATION_STATE_KEY."
+fi
+# The selected source version must belong to the exact RUN_ID state key —
+# never a prefix-neighboring or production object.
+if [[ "$chosen_version_name" != "$VALIDATION_STATE_KEY" ]]; then
+  vf_fail "Selected version ${chosen_version_id} belongs to '${chosen_version_name:-<unknown>}', not the exact RUN_ID state key ${VALIDATION_STATE_KEY}."
 fi
 echo "Selected noncurrent version: $chosen_version_id (created $chosen_version_time)"
 
@@ -107,8 +125,10 @@ on_signal() {
 }
 trap on_signal INT TERM
 
-# The copy is asynchronous; --wait-for-state COMPLETED makes the CLI poll the
-# work request and fail unless it completes.
+# The copy is asynchronous (--wait-for-state COMPLETED makes the CLI poll the
+# work request and fail unless it completes) and conditional
+# (--destination-object-if-none-match-e-tag '*' makes the service reject it if
+# a concurrent writer created the destination after the absence check above).
 if ! oci "${VALIDATION_OCI_ARGS[@]}" os object copy \
     --source-bucket "$VALIDATION_LIB_APPROVED_BUCKET" \
     --source-object-name "$VALIDATION_STATE_KEY" \
@@ -117,9 +137,10 @@ if ! oci "${VALIDATION_OCI_ARGS[@]}" os object copy \
     --destination-namespace "$VALIDATION_LIB_APPROVED_NAMESPACE" \
     --destination-region "$VALIDATION_LIB_APPROVED_REGION" \
     --destination-object-name "$VALIDATION_RESTORE_KEY" \
+    --destination-object-if-none-match-e-tag '*' \
     --wait-for-state COMPLETED --wait-interval-seconds 5 \
     >"$work_dir/copy.log" 2>&1; then
-  echo "The asynchronous object copy did not complete successfully." >&2
+  echo "The asynchronous object copy did not complete successfully (work-request failure, precondition rejection, or a concurrent creation of the destination key)." >&2
   sed -n '1,60p' "$work_dir/copy.log" >&2
   exit 1
 fi
@@ -132,12 +153,28 @@ if [[ -z "$copy_version_id" ]]; then
   exit 1
 fi
 
-oci "${VALIDATION_OCI_ARGS[@]}" os object get \
-  --bucket-name "$VALIDATION_LIB_APPROVED_BUCKET" --name "$VALIDATION_STATE_KEY" \
-  --version-id "$chosen_version_id" --file "$work_dir/source-version.tfstate" >"$work_dir/source-get.log" 2>&1
-oci "${VALIDATION_OCI_ARGS[@]}" os object get \
-  --bucket-name "$VALIDATION_LIB_APPROVED_BUCKET" --name "$VALIDATION_RESTORE_KEY" \
-  --file "$work_dir/restored.tfstate" >"$work_dir/dest-get.log" 2>&1
+if ! oci "${VALIDATION_OCI_ARGS[@]}" os object get \
+    --bucket-name "$VALIDATION_LIB_APPROVED_BUCKET" --name "$VALIDATION_STATE_KEY" \
+    --version-id "$chosen_version_id" --file "$work_dir/source-version.tfstate" >"$work_dir/source-get.log" 2>&1; then
+  echo "Could not download the selected source version for comparison; the temporary root is preserved as evidence." >&2
+  sed -n '1,30p' "$work_dir/source-get.log" >&2
+  exit 1
+fi
+if ! oci "${VALIDATION_OCI_ARGS[@]}" os object get \
+    --bucket-name "$VALIDATION_LIB_APPROVED_BUCKET" --name "$VALIDATION_RESTORE_KEY" \
+    --file "$work_dir/restored.tfstate" >"$work_dir/dest-get.log" 2>&1; then
+  echo "Could not download the restored object for comparison; the temporary root is preserved as evidence." >&2
+  sed -n '1,30p' "$work_dir/dest-get.log" >&2
+  exit 1
+fi
+
+# The restored object must be a byte-identical copy of the complete selected
+# source-version snapshot (server-side copy re-encrypts but never rewrites
+# content), not merely a matching lineage/serial pair.
+if ! cmp -s "$work_dir/source-version.tfstate" "$work_dir/restored.tfstate"; then
+  echo "The restored object differs from the complete selected source-version snapshot; refusing it." >&2
+  exit 1
+fi
 
 state_snapshot_contract() {
   jq -e '(.lineage | type == "string" and length > 0) and
@@ -207,5 +244,6 @@ fi
 
 echo "State version recovery rehearsal passed."
 echo "Restored $VALIDATION_STATE_KEY version $chosen_version_id to $VALIDATION_RESTORE_KEY"
+echo "Restored object verified byte-identical to the selected source-version snapshot and readable by Terraform."
 echo "Snapshot identity: lineage $source_lineage serial $source_serial"
 echo "Both validation keys are retained for operator review; deletion requires a separate cleanup approval naming RUN_ID $VALIDATION_RUN_ID."

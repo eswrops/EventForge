@@ -92,14 +92,19 @@ RUN_ID=<run id> TERRAFORM_BIN=/Users/eswr/tools/terraform/1.12.2/terraform \
   TF_OCI_AUTH=APIKey TF_OCI_PROFILE=DEFAULT \
   TF_STATE_BUCKET=eventforge-tfstate-prod \
   OCI_OBJECT_STORAGE_NAMESPACE=axrq1dasyz3y OCI_REGION=ap-hyderabad-1 \
+  TF_VALIDATION_EXPECTED_KMS_KEY_ID=<state CMK OCID> \
   scripts/ci/verify-oci-backend.sh     # disposable-key write/read/lock/contention/release
 ```
 
 The hardened script derives its key from the mandatory `RUN_ID`
 (`validation/live-acceptance-<RUN_ID>/terraform.tfstate`), fails closed on any
-unapproved bucket/namespace/region/key/workspace, pins Terraform 1.12.2 via
-`TERRAFORM_BIN`, reaps its background apply on EXIT/INT/TERM, and preserves
-its temporary root and logs in a protected evidence directory on failure. See
+unapproved bucket/namespace/region/key/workspace, verifies the bucket
+preconditions (private, versioned, bound to the exact expected CMK and that
+CMK still ENABLED), proves the destination state and lock keys absent with
+successful fully-paginated listings (`--all` — a failed listing is never
+treated as absence), pins Terraform 1.12.2 via `TERRAFORM_BIN`, reaps its
+background apply on EXIT/INT/TERM, and preserves its temporary root and logs
+in a protected evidence directory on failure. See
 [live-backend-validation-approval.md](../m1-final/live-backend-validation-approval.md).
 
 ## 5. Isolated backend lock validation (checklist step D)
@@ -144,23 +149,26 @@ asynchronous copy (`--wait-for-state COMPLETED`), and verifies the restored
 snapshot's lineage/serial plus Terraform readability:
 
 ```bash
-# 1. List versions of the disposable key and pick a prior version-id:
+# 1. List versions of the disposable key and pick a prior version-id
+#    (list-object-versions is the supported command; --all paginates fully;
+#    exclude delete markers — the CURRENT version id comes from object head):
 oci os object list-object-versions --bucket-name eventforge-tfstate-prod \
-  --prefix validation/ | jq -r '.data[] | select(."is-delete-marker" != true and ."version-id" != null) | ."name", ."time-created", ."version-id"'
-#    (exclude delete markers; the CURRENT version id comes from object head)
+  --prefix validation/ --all | jq -r '.data[] | select(."is-delete-marker" != true and ."version-id" != null) | ."name", ."time-created", ."version-id"'
 oci os object head --bucket-name eventforge-tfstate-prod \
   --name validation/live-acceptance-<RUN_ID>/terraform.tfstate | jq '."version-id"'
 # 2. Restore a validated NONCURRENT version onto a scratch key first
 #    (validation/restore-test-<RUN_ID>/terraform.tfstate, confirmed absent
-#    beforehand), waiting for the asynchronous copy:
+#    beforehand), waiting for the asynchronous copy; the none-match header
+#    makes the service reject the copy if the scratch key appeared meanwhile:
 oci os object copy --source-bucket eventforge-tfstate-prod \
   --source-object-name validation/live-acceptance-<RUN_ID>/terraform.tfstate \
   --source-version-id <noncurrent-version-id> \
   --destination-bucket eventforge-tfstate-prod \
   --destination-object-name validation/restore-test-<RUN_ID>/terraform.tfstate \
-  --destination-region ap-hyderabad-1 --wait-for-state COMPLETED
-# 3. terraform state pull on a scratch backend pointing at the scratch key must succeed
-#    and match the source version's lineage/serial.
+  --destination-region ap-hyderabad-1 \
+  --destination-object-if-none-match-e-tag '*' --wait-for-state COMPLETED
+# 3. terraform state pull on a scratch backend pointing at the scratch key must succeed,
+#    and the restored object must be byte-identical to the selected source version.
 # 4. Only after the scratch rehearsal: repeat onto the real key if a real recovery is needed,
 #    with a fresh manual backup taken immediately beforehand.
 ```

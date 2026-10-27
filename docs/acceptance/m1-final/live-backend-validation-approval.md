@@ -1,7 +1,8 @@
 # Live backend validation — approval package (PREPARED, NOT EXECUTED)
 
-Status: **HARDENED PACKAGE 2026-10-27 — awaiting explicit operator approval.
-Nothing in this package has been executed against OCI.** Scope: live
+Status: **HARDENED PACKAGE 2026-10-27, SAFETY PATCH 1 2026-10-27 — awaiting
+explicit operator approval. Nothing in this package has been executed against
+OCI.** Scope: live
 verification of **STATE-LOCKING, STATE-CONTENTION, and STATE-RECOVERY** on
 disposable keys only, plus read-only bucket/CMK verification. **IAM-DENIAL is
 NOT covered by this package** — it is deferred to the federation phase (§9);
@@ -14,26 +15,35 @@ touched: every write this package can perform lands under
 This package is immutable once merged: the operator verifies the exact bytes
 before running anything and transcribes the merge commit into the §12 record.
 
-- PR: #22 (squash-merged into `main` through branch protection).
-- Merge commit: `a4e0904a69bad0e16387fafb74b31c0d68ec976a`
-  (verify: `git log --format='%H %s' -1 a4e0904`)
+- Base package: PR #22 (squash-merged as `a4e0904a69bad0e16387fafb74b31c0d68ec976a`).
+- Safety patch 1: the focused PR that introduced the object-absence,
+  copy-race, and precondition hardening (squash-merged into `main` through
+  branch protection).
+- Merge commit: `SAFETY_PATCH_MERGE_SHA` — replaced by a docs-only stamp
+  commit immediately after the merge (the `a4e0904` precedent).
 - Content hashes (sha256), verified before execution:
 
 | File | sha256 |
 | --- | --- |
-| `scripts/ci/lib-oci-validation.sh` | `98f3e2c47a52d3d4797f58c93fad25b95f894efa7a9d83e8e826ce866cbf04a7` |
-| `scripts/ci/verify-oci-backend.sh` | `d17e8d5a95ec368c9e849d1452b86896ed52ea9920174f4c055c45ddd4c8d4ff` |
-| `scripts/ci/verify-oci-backend-denied.sh` | `496b014d77be609c70b59d52650a62a9f326e9e2319d4477d8c693cb0462b001` |
-| `scripts/acceptance/oci-state-version-recovery.sh` | `bd8d5d45b96d38ca9d42a5c4a7f4f518d7c7cd4653ad671edae1a8a5e14de078` |
+| `scripts/ci/lib-oci-validation.sh` | `9e03f6f90d0814b959201403d622f65acabae7f9c432f3573ad36432b4958f7b` |
+| `scripts/ci/verify-oci-backend.sh` | `f069bfea81c514a18f83fb02208eac372fce298268d50feeebe247287582bcca` |
+| `scripts/ci/verify-oci-backend-denied.sh` | `aa2130bec68fbc38b51a5258c3ff6f6bc8983c6d2c6bea953f60ffc551056512` |
+| `scripts/acceptance/oci-state-version-recovery.sh` | `70db26949c34ce454939a54469d69d5f9b672feadd79e7baa1562a3be6b15f23` |
 
 - Executable: **Terraform v1.12.2 exactly**, selected via `TERRAFORM_BIN`
   (`/Users/eswr/tools/terraform/1.12.2/terraform`). The scripts refuse any
   other binary or version and never fall back to `PATH`.
 - Regression suite: `tests/ci/test-oci-live-validation-guards.sh` (offline,
   stubbed `terraform`/`oci`) covers wrong bucket/namespace, unauthorized key
-  prefixes, reused keys, unexpected Terraform versions, wrong authentication
-  profiles, background-apply failure, lock-contention failure, interrupted
-  execution, and incomplete asynchronous copies.
+  prefixes, reused keys (including keys whose current object is gone but
+  whose previous versions or delete markers remain), failed listings (403,
+  500, pagination failure, malformed responses — never treated as absence),
+  bucket precondition violations (public access, versioning off, wrong or
+  disabled CMK, unreadable metadata), unexpected Terraform versions, wrong
+  authentication profiles, background-apply failure, lock-contention failure
+  (including an unrelated error that merely contains the word "lock"),
+  interrupted execution, incomplete asynchronous copies, conditional-copy
+  rejection, and concurrent destination creation.
 
 ## 2. Approved constants, derived keys, and identity
 
@@ -47,12 +57,16 @@ before running anything and transcribes the merge commit into the §12 record.
 | Lock key (derived) | `<state key>.lock` |
 | Restore key (derived) | `validation/restore-test-<RUN_ID>/terraform.tfstate` |
 | Workspace | `default` only |
+| `TF_VALIDATION_EXPECTED_KMS_KEY_ID` | the exact state CMK OCID (operator transcribes it from the gitignored tfvars / Phase-2 record) |
 
 The scripts fail closed when any supplied value differs from the above, when
 `TF_BACKEND_VALIDATION_KEY` does not equal the derived state key exactly, when
-the destination state key or its lock key already exists, and for the
+the destination state key or its lock key cannot be proven absent, and for the
 `bootstrap/`, `platform/`, `frontend/` prefixes unconditionally (never probe
-production keys). Authentication is never implied: `TF_OCI_AUTH` must be
+production keys). Before any mutation they verify, read-only: the
+authenticated namespace is the approved one, the bucket is `NoPublicAccess`,
+versioning `Enabled`, bound to the exact expected CMK, and that CMK is still
+`ENABLED` — an inability to complete any of these checks aborts the run. Authentication is never implied: `TF_OCI_AUTH` must be
 exactly `APIKey` (with an explicit `TF_OCI_PROFILE`, which alone selects the
 backend `config_file_profile` — `OCI_CLI_PROFILE` is never relied on) or
 `ResourcePrincipal` (with the RPST environment from `configure-oci-wif.sh`).
@@ -79,6 +93,9 @@ export OCI_REGION="ap-hyderabad-1"
 export TERRAFORM_BIN="/Users/eswr/tools/terraform/1.12.2/terraform"
 export TF_OCI_AUTH="APIKey"
 export TF_OCI_PROFILE="DEFAULT"                  # approved operator write identity
+# Transcribe the EXACT state CMK OCID from the gitignored tfvars / Phase-2
+# record; the scripts verify the bucket is bound to it and that it is ENABLED:
+export TF_VALIDATION_EXPECTED_KMS_KEY_ID="<ocid1.key.oc1.ap-hyderabad-1...>"
 
 # 0. Read-only preconditions: approved bucket coordinates, no active locks
 #    anywhere near the package prefixes, key absent (scripts re-verify all of
@@ -86,7 +103,9 @@ export TF_OCI_PROFILE="DEFAULT"                  # approved operator write ident
 oci os bucket get --bucket-name eventforge-tfstate-prod \
   | jq '.data."kms-key-id", .data."public-access-type", .data."versioning"'
 oci os object list --bucket-name eventforge-tfstate-prod \
-  --prefix "validation/live-acceptance-${RUN_ID}/" | jq '.data[].name'
+  --prefix "validation/live-acceptance-${RUN_ID}/" --all | jq '.data[].name'
+oci os object list-object-versions --bucket-name eventforge-tfstate-prod \
+  --prefix "validation/live-acceptance-${RUN_ID}/" --all | jq '.data[].name'
 
 # 1. STATE-LOCKING + STATE-CONTENTION (LIVE MUTATION, confined to the state
 #    and lock keys above): init, isolated apply, held-lock contention (a
@@ -113,24 +132,41 @@ backend.hcl edit exists anymore.
 
 `verify-oci-backend.sh`:
 
-1. `os object head` state key → must be ABSENT; `os object head` lock key →
-   must be ABSENT (any presence aborts before any mutation).
-2. `terraform init` against the derived key (no state write at init).
-3. `workspace show` must return `default` before any apply.
-4. Background `terraform apply` (holds the lock ~15 s): writes the state
+1. `os ns get`, `os bucket get`, `kms management key get` — the
+   authenticated namespace, `NoPublicAccess`, `versioning Enabled`, the exact
+   expected CMK bound and `ENABLED`; any failure or malformed response aborts
+   before any mutation.
+2. For EACH of the state key and the lock key: `os object list --prefix <key>
+   --all` AND `os object list-object-versions --prefix <key> --all` must
+   SUCCEED, and the EXACT object name must appear in neither (no current
+   object, previous version, or delete marker). A failed listing is
+   authorization/authentication/network/pagination trouble and is never
+   treated as absence.
+3. `terraform init` against the derived key (no state write at init).
+4. `workspace show` must return `default` before any apply.
+5. Background `terraform apply` (holds the lock ~15 s): writes the state
    object and transient `<key>.lock` objects; the script polls `os object
    head` on the lock key and records the exact observed lock object name.
-5. Concurrent `terraform plan -lock-timeout=1s` must fail with a lock error.
-6. `terraform state pull` must return the probe resource.
-7. `terraform destroy` empties the state; a post-destroy plan must re-acquire
+6. Concurrent `terraform plan -lock-timeout=1s` must fail with the real
+   Terraform state-lock error ("Error acquiring the state lock"); an
+   unrelated error that merely contains the word "lock" fails the gate.
+7. `terraform state pull` must return the probe resource.
+8. `terraform destroy` empties the state; a post-destroy plan must re-acquire
    the released lock (deliberately not applied).
 
-`oci-state-version-recovery.sh`: `os object head` (source present, current
-version id), `os object list-object-versions` (read), `os object head`
-(destination ABSENT), `os object copy --source-version-id <vid> --wait-for-state
-COMPLETED` (single write to the restore-test key), `os object head` + two
-`os object get` (read-back and lineage/serial comparison), then scratch
-`terraform init` + `state pull` against the restore key (reads only).
+`oci-state-version-recovery.sh`: the same preconditions as above, then
+`os object head` (source present, current version id),
+`os object list-object-versions --all` (must succeed; malformed responses
+abort), `os object list --all` + `os object list-object-versions --all` on the
+restore key (absence proof), `os object copy --source-version-id <validated
+vid> --destination-object-if-none-match-e-tag '*' --wait-for-state COMPLETED`
+(single conditional write to the restore-test key; the service rejects it if
+a concurrent writer created the destination), `os object head` + two
+`os object get` (read-back; the restored object must be BYTE-IDENTICAL to the
+complete selected source-version snapshot via `cmp`, with equal lineage and
+serial), then scratch `terraform init` + `state pull` against the restore key
+(reads only). The selected source version is re-confirmed to belong to the
+exact RUN_ID state key before the copy.
 
 Neither script contains any `os object delete`/`bulk-delete`/`put`, no
 `force-unlock`, and no `state push`; the offline tests assert this.
@@ -166,9 +202,11 @@ incident review if any of: an object appears outside the three permitted keys;
 a lock object remains after the script reports release (wait 120 s, re-check,
 do NOT force-unlock); any command touches a `bootstrap/`, `platform/`, or
 `frontend/` key; the bucket reports `public-access-type` other than
-`NoPublicAccess` or a changed `kms-key-id`; the concurrent plan fails for a
+`NoPublicAccess`, versioning other than `Enabled`, a changed `kms-key-id`,
+or a disabled/failed CMK lookup; any absence-proof listing fails or returns a
+malformed response (never treated as absence); the concurrent plan fails for a
 non-lock reason; any guard refuses an input (bucket/namespace/region/key/
-workspace/binary/auth).
+workspace/binary/auth/expected-CMK).
 
 ## 8. Version-recovery procedure (corrected)
 
@@ -191,14 +229,16 @@ comes from `oci os object head` on the object. The committed
 4. Confirm the exact destination `validation/restore-test-<RUN_ID>/terraform.tfstate`
    is absent.
 5. Copy that version EXCLUSIVELY to the restore-test key with
-   `--source-version-id` and `--wait-for-state COMPLETED` (the copy is
-   asynchronous; an incomplete work request fails the script), then re-HEAD
-   the destination to prove the object actually landed.
+   `--source-version-id`, `--destination-object-if-none-match-e-tag '*'`
+   (the service rejects the copy if a concurrent writer created the
+   destination after the absence check), and `--wait-for-state COMPLETED`
+   (the copy is asynchronous; an incomplete work request fails the script),
+   then re-HEAD the destination to prove the object actually landed.
 6. Verify the restored state: `os object get` of both source version and
-   destination, requiring a valid snapshot (`lineage`, numeric `serial`,
-   `terraform_version`) with identical lineage and serial, then scratch
-   `terraform init` + `state pull` against the restore key with the same
-   equality check.
+   destination, requiring the restored object to be BYTE-IDENTICAL to the
+   complete selected source-version snapshot (`cmp`) with identical lineage
+   and serial, then scratch `terraform init` + `state pull` against the
+   restore key with the same equality check.
 7. Never restore onto the production bootstrap key — or any production key;
    a production recovery remains a separately approved incident procedure
    ([state-recovery.md §7](../../m1b-bootstrap/state-recovery.md)).
@@ -258,6 +298,8 @@ package**. Therefore:
 - [ ] Observed lock object name:
 - [ ] Version ids observed:
 - [ ] STATE-RECOVERY evidence retained at:
+- [ ] TF_VALIDATION_EXPECTED_KMS_KEY_ID used (transcribed from tfvars):
+- [ ] Bucket preconditions verified live (NoPublicAccess / versioning / CMK bound + ENABLED):
 - [ ] KMS ids confirmed:
 - [ ] IAM-DENIAL: NOT_RUN (deferred to federation phase)
 - [ ] Cleanup performed (ids deleted, when; separate approval reference):
