@@ -32,6 +32,34 @@ jobs:
         env:
           OCI_WIF_CONFIG_JSON: ${{ secrets.OCI_WIF_CONFIG_JSON }}
         run: scripts/ci/configure-oci-wif.sh
+      - name: Diagnose exchange failure (print endpoint error body)
+        if: failure()
+        env:
+          OCI_WIF_CONFIG_JSON: ${{ secrets.OCI_WIF_CONFIG_JSON }}
+        run: |
+          umask 077
+          cid="$(jq -r .token_exchange_client_id <<<"$OCI_WIF_CONFIG_JSON")"
+          sec="$(jq -r .token_exchange_client_secret <<<"$OCI_WIF_CONFIG_JSON")"
+          dom="$(jq -r .token_exchange_domain_url <<<"$OCI_WIF_CONFIG_JSON")"
+          rtype="$(jq -r .token_exchange_resource_type <<<"$OCI_WIF_CONFIG_JSON")"
+          aud="$(jq -r '.audience // "github-actions"' <<<"$OCI_WIF_CONFIG_JSON")"
+          token="$(curl --fail --silent --show-error \
+            -H "Authorization: Bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${aud}" | jq -er '.value')"
+          openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 -out "$RUNNER_TEMP/diag-key.pem" 2>/dev/null
+          pubkey="$(openssl pkey -in "$RUNNER_TEMP/diag-key.pem" -pubout 2>/dev/null)"
+          echo "Replaying the exchange with error-body capture (secret never printed):"
+          curl --silent --write-out '\nHTTP %{http_code}\n' \
+            --user "${cid}:${sec}" \
+            --header "Content-Type: application/x-www-form-urlencoded" \
+            --data-urlencode "grant_type=urn:ietf:params:oauth:grant-type:token-exchange" \
+            --data-urlencode "requested_token_type=urn:oci:token-type:oci-rpst" \
+            --data-urlencode "subject_token_type=jwt" \
+            --data-urlencode "subject_token=${token}" \
+            --data-urlencode "public_key=${pubkey}" \
+            --data-urlencode "res_type=${rtype}" \
+            --data-urlencode "rpst_exp=60" \
+            "${dom%/}/oauth2/v1/token" | sed -E 's/"token":"[^"]*"/"token":"<redacted>"/g'
       - name: Observe the actual RPST claim mapping (sanitized)
         run: |
           umask 077
