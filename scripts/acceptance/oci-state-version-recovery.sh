@@ -41,20 +41,24 @@ if [[ -z "$current_version_id" ]]; then
   vf_fail "Object head reported no current version id for $VALIDATION_STATE_KEY; refusing to guess."
 fi
 
-# The list-object-versions response data items carry name, version-id,
+# The list-object-versions response items carry name, version-id,
 # is-delete-marker, and time-created (there is no is-current field); the
 # current version was obtained from the object head above. The listing is
 # fully paginated with --all and must succeed: a listing failure is never
-# interpreted as an empty version history.
+# interpreted as an empty version history. The extended CLI renderer flattens
+# the raw {"data":{"items":[...]}} collection into {"data":[...]}; both are
+# accepted, anything else is malformed.
 if ! versions_json="$(oci "${VALIDATION_OCI_ARGS[@]}" os object list-object-versions \
     --bucket-name "$VALIDATION_LIB_APPROVED_BUCKET" --prefix "$VALIDATION_STATE_KEY" --all)"; then
   vf_fail "The object-version listing for $VALIDATION_STATE_KEY errored (authorization, authentication, network, or pagination problem); refusing to select a snapshot from an unverifiable history."
 fi
+if ! version_items="$(vf_collection_items <<<"$versions_json" 2>/dev/null)"; then
+  vf_fail "Malformed object-version response for $VALIDATION_STATE_KEY; refusing to interpret it."
+fi
 if ! noncurrent_tsv="$(jq -r --arg key "$VALIDATION_STATE_KEY" --arg cur "$current_version_id" '
-  (if (.data | type) == "array" then .data else error("missing data array") end)
-  | map(select(."name" == $key and ."is-delete-marker" != true and ."version-id" != null and ."version-id" != $cur))
+  map(select(."name" == $key and ."is-delete-marker" != true and ."version-id" != null and ."version-id" != $cur))
   | sort_by(."time-created", ."version-id")[]
-  | [."name", ."time-created", ."version-id"] | @tsv' <<<"$versions_json")"; then
+  | [."name", ."time-created", ."version-id"] | @tsv' <<<"$version_items")"; then
   vf_fail "Malformed object-version response for $VALIDATION_STATE_KEY; refusing to interpret it."
 fi
 

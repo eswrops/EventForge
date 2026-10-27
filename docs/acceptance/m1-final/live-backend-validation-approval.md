@@ -1,8 +1,9 @@
 # Live backend validation — approval package (PREPARED, NOT EXECUTED)
 
-Status: **HARDENED PACKAGE 2026-10-27, SAFETY PATCH 1 2026-10-27 — awaiting
-explicit operator approval. Nothing in this package has been executed against
-OCI.** Scope: live
+Status: **HARDENED PACKAGE 2026-10-27, SAFETY PATCH 1 2026-10-27, OCI CLI
+CONTRACT FIX 1 2026-10-27 — awaiting explicit operator approval. Nothing in
+this package has been executed against OCI beyond read-only response-shape
+inspection with the operator's existing authorized profile.** Scope: live
 verification of **STATE-LOCKING, STATE-CONTENTION, and STATE-RECOVERY** on
 disposable keys only, plus read-only bucket/CMK verification. **IAM-DENIAL is
 NOT covered by this package** — it is deferred to the federation phase (§9);
@@ -19,16 +20,21 @@ before running anything and transcribes the merge commit into the §12 record.
 - Safety patch 1: the focused PR that introduced the object-absence,
   copy-race, and precondition hardening (squash-merged into `main` through
   branch protection).
-- Merge commit: `938ff899b68367fb408a17a6d1a8eea758d62894`
-  (verify: `git log --format='%H %s' -1 938ff89`)
+- Contract fix 1: the focused PR that corrected the three OCI CLI response
+  contracts — namespace envelope parsing, object-version listing envelope
+  parsing with required successful `--all` pagination, and KMS key lookup
+  through the vault's actual management endpoint (see §8) — with the offline
+  fixtures rewritten to the live-verified envelopes.
+- Merge commit: `CONTRACT_FIX_MERGE_SHA` — replaced by a docs-only stamp
+  commit immediately after the merge (the `938ff89` → `486ed6f` precedent).
 - Content hashes (sha256), verified before execution:
 
 | File | sha256 |
 | --- | --- |
-| `scripts/ci/lib-oci-validation.sh` | `9e03f6f90d0814b959201403d622f65acabae7f9c432f3573ad36432b4958f7b` |
+| `scripts/ci/lib-oci-validation.sh` | `0760c2454f214a9c36d2ac44f2bb3f2aeefdc36367a3fc9618cd272ae5774570` |
 | `scripts/ci/verify-oci-backend.sh` | `f069bfea81c514a18f83fb02208eac372fce298268d50feeebe247287582bcca` |
 | `scripts/ci/verify-oci-backend-denied.sh` | `aa2130bec68fbc38b51a5258c3ff6f6bc8983c6d2c6bea953f60ffc551056512` |
-| `scripts/acceptance/oci-state-version-recovery.sh` | `70db26949c34ce454939a54469d69d5f9b672feadd79e7baa1562a3be6b15f23` |
+| `scripts/acceptance/oci-state-version-recovery.sh` | `47705b53341672aebbf542992fa3332ab9aece099cf6970c04b536fdb81daea3` |
 
 - Executable: **Terraform v1.12.2 exactly**, selected via `TERRAFORM_BIN`
   (`/Users/eswr/tools/terraform/1.12.2/terraform`). The scripts refuse any
@@ -43,7 +49,19 @@ before running anything and transcribes the merge commit into the §12 record.
   authentication profiles, background-apply failure, lock-contention failure
   (including an unrelated error that merely contains the word "lock"),
   interrupted execution, incomplete asynchronous copies, conditional-copy
-  rejection, and concurrent destination creation.
+  rejection, and concurrent destination creation. Contract fix 1 rewrote the
+  stubs to the live-verified CLI envelopes and added: the wrapped
+  `{"data":"<namespace>"}` namespace envelope (plus non-string, empty, and
+  malformed variants), version listings in both the raw
+  `{"data":{"items":[...]}}` and rendered `{"data":[...]}` envelopes, the
+  rendered empty listing `{"prefixes":[]}` with no `data` key, exact-name
+  matching against prefix-neighboring versions, and the KMS contract —
+  endpoint discovery via `kms management vault list`, the mandatory
+  `--endpoint` on `kms management key get`, the wrapped
+  `{"data":{"id":...,"lifecycle-state":...}}` key envelope, foreign-key
+  refusal, unreachable/incorrect/absent management endpoints, vault-list
+  failures, no-ACTIVE-vault refusals, and missing or malformed
+  `TF_VALIDATION_KMS_COMPARTMENT_OCID`.
 
 ## 2. Approved constants, derived keys, and identity
 
@@ -58,6 +76,7 @@ before running anything and transcribes the merge commit into the §12 record.
 | Restore key (derived) | `validation/restore-test-<RUN_ID>/terraform.tfstate` |
 | Workspace | `default` only |
 | `TF_VALIDATION_EXPECTED_KMS_KEY_ID` | the exact state CMK OCID (operator transcribes it from the gitignored tfvars / Phase-2 record) |
+| `TF_VALIDATION_KMS_COMPARTMENT_OCID` | the compartment whose vaults hold the state CMK — root compartment is the tenancy OCID (operator transcribes it from the gitignored tfvars; the precondition discovers the vault's actual management endpoint from it) |
 
 The scripts fail closed when any supplied value differs from the above, when
 `TF_BACKEND_VALIDATION_KEY` does not equal the derived state key exactly, when
@@ -66,7 +85,8 @@ the destination state key or its lock key cannot be proven absent, and for the
 production keys). Before any mutation they verify, read-only: the
 authenticated namespace is the approved one, the bucket is `NoPublicAccess`,
 versioning `Enabled`, bound to the exact expected CMK, and that CMK is still
-`ENABLED` — an inability to complete any of these checks aborts the run. Authentication is never implied: `TF_OCI_AUTH` must be
+`ENABLED` through its vault's actual management endpoint — an inability to
+complete any of these checks aborts the run. Authentication is never implied: `TF_OCI_AUTH` must be
 exactly `APIKey` (with an explicit `TF_OCI_PROFILE`, which alone selects the
 backend `config_file_profile` — `OCI_CLI_PROFILE` is never relied on) or
 `ResourcePrincipal` (with the RPST environment from `configure-oci-wif.sh`).
@@ -96,16 +116,24 @@ export TF_OCI_PROFILE="DEFAULT"                  # approved operator write ident
 # Transcribe the EXACT state CMK OCID from the gitignored tfvars / Phase-2
 # record; the scripts verify the bucket is bound to it and that it is ENABLED:
 export TF_VALIDATION_EXPECTED_KMS_KEY_ID="<ocid1.key.oc1.ap-hyderabad-1...>"
+# Transcribe the compartment whose vaults hold the state CMK (root compartment
+# is the tenancy OCID); the precondition discovers the vault's actual
+# management endpoint from it:
+export TF_VALIDATION_KMS_COMPARTMENT_OCID="<ocid1.tenancy.oc1.... or ocid1.compartment.oc1....>"
 
 # 0. Read-only preconditions: approved bucket coordinates, no active locks
 #    anywhere near the package prefixes, key absent (scripts re-verify all of
-#    this and fail closed, but record the evidence):
+#    this and fail closed, but record the evidence). The listing envelopes are
+#    the CLI's rendered forms documented in §8 — an empty result prints
+#    {"prefixes":[]} with no data key:
 oci os bucket get --bucket-name eventforge-tfstate-prod \
   | jq '.data."kms-key-id", .data."public-access-type", .data."versioning"'
 oci os object list --bucket-name eventforge-tfstate-prod \
-  --prefix "validation/live-acceptance-${RUN_ID}/" --all | jq '.data[].name'
+  --prefix "validation/live-acceptance-${RUN_ID}/" --all \
+  | jq -r 'if (.data|type)=="array" then .data[].name elif (.data|type)=="object" then .data.items[].name else "<empty>" end'
 oci os object list-object-versions --bucket-name eventforge-tfstate-prod \
-  --prefix "validation/live-acceptance-${RUN_ID}/" --all | jq '.data[].name'
+  --prefix "validation/live-acceptance-${RUN_ID}/" --all \
+  | jq -r 'if (.data|type)=="array" then .data[].name elif (.data|type)=="object" then .data.items[].name else "<empty>" end'
 
 # 1. STATE-LOCKING + STATE-CONTENTION (LIVE MUTATION, confined to the state
 #    and lock keys above): init, isolated apply, held-lock contention (a
@@ -132,16 +160,24 @@ backend.hcl edit exists anymore.
 
 `verify-oci-backend.sh`:
 
-1. `os ns get`, `os bucket get`, `kms management key get` — the
-   authenticated namespace, `NoPublicAccess`, `versioning Enabled`, the exact
-   expected CMK bound and `ENABLED`; any failure or malformed response aborts
-   before any mutation.
+1. `os ns get`, `os bucket get`, `kms management vault list` +
+   `kms management key get` — the authenticated namespace parsed from the
+   wrapped `{"data":"<namespace>"}` envelope, `NoPublicAccess`,
+   `versioning Enabled`, the exact expected CMK bound; the CMK is then read
+   through its vault's ACTUAL management endpoint (discovered from
+   `kms management vault list` in `TF_VALIDATION_KMS_COMPARTMENT_OCID` —
+   `kms management key get` has no regional endpoint and fails with
+   "Missing option --endpoint" without one) and must report the expected key
+   id and `ENABLED` in the wrapped `{"data":{...}}` envelope; any failure,
+   foreign key, unreachable endpoint, or malformed response aborts before any
+   mutation.
 2. For EACH of the state key and the lock key: `os object list --prefix <key>
    --all` AND `os object list-object-versions --prefix <key> --all` must
    SUCCEED, and the EXACT object name must appear in neither (no current
    object, previous version, or delete marker). A failed listing is
    authorization/authentication/network/pagination trouble and is never
-   treated as absence.
+   treated as absence; a malformed response (an envelope outside §8) is
+   refused the same way.
 3. `terraform init` against the derived key (no state write at init).
 4. `workspace show` must return `default` before any apply.
 5. Background `terraform apply` (holds the lock ~15 s): writes the state
@@ -203,20 +239,50 @@ a lock object remains after the script reports release (wait 120 s, re-check,
 do NOT force-unlock); any command touches a `bootstrap/`, `platform/`, or
 `frontend/` key; the bucket reports `public-access-type` other than
 `NoPublicAccess`, versioning other than `Enabled`, a changed `kms-key-id`,
-or a disabled/failed CMK lookup; any absence-proof listing fails or returns a
+or a disabled/failed CMK lookup (including a failed vault listing, no ACTIVE
+vault, an unreachable or foreign management endpoint, or a wrapped-envelope
+violation); any absence-proof listing fails or returns a
 malformed response (never treated as absence); the concurrent plan fails for a
 non-lock reason; any guard refuses an input (bucket/namespace/region/key/
-workspace/binary/auth/expected-CMK).
+workspace/binary/auth/expected-CMK/KMS-compartment).
 
-## 8. Version-recovery procedure (corrected)
+## 8. Response-envelope contract and version-recovery procedure (corrected)
 
 The previously documented command `oci os object list-versions` **does not
 exist**. The supported CLI command is `oci os object list-object-versions`,
-whose response is `{"data": [ ... ], "prefixes": [ ... ]}` with items carrying
-`name`, `version-id`, `is-delete-marker`, `time-created`, `size`, and
-`storage-tier` — there is **no `is-current` field**; the current version id
-comes from `oci os object head` on the object. The committed
-`oci-state-version-recovery.sh` implements the corrected procedure:
+run with `--all` (a failed pagination is never an empty history). All
+envelopes below were verified live by read-only response inspection on the
+operator workstation (OCI CLI 3.95.1, existing authorized profile); the
+offline fixtures reproduce exactly these shapes and the scripts accept — and
+only accept — them:
+
+- `os ns get` → `{"data": "<namespace>"}` (wrapped; the namespace is parsed
+  from `.data` and must be a non-empty string).
+- `os bucket get` → `{"data": {...}, "etag": ...}` with
+  `.data."kms-key-id"`, `.data."public-access-type"`, `.data."versioning"`.
+- `os object list --all` and `os object list-object-versions --all` are both
+  rendered by the Object Storage extended CLI renderer, which paginates
+  internally and flattens the raw collection:
+  - non-empty: `{"data": [ ...items... ], "prefixes": [...]}` — the raw REST
+    body's `items` array is flattened into `data` (a `{"data":{"items":[...]}}`
+    object also occurs for raw-collection renders and is accepted);
+  - empty: `{"prefixes": []}` — **no `data` key at all**.
+- Version items carry `name`, `version-id`, `is-delete-marker`,
+  `time-created`, `size`, and `storage-tier` — there is **no `is-current`
+  field**; the current version id comes from `oci os object head` (whose
+  headers render at the top level, e.g. `{"version-id": ...}`).
+- `kms management vault list --compartment-id <compartment> --all` needs NO
+  endpoint and renders `{"data": [ ...vaults... ]}`; each ACTIVE vault carries
+  `"management-endpoint"`. This vault list is the **verified source of the
+  vault management endpoint**.
+- `kms management key get` has no regional endpoint: without `--endpoint` it
+  fails with "Missing option --endpoint" (verified live). With the vault's
+  management endpoint it returns the wrapped envelope
+  `{"data": {"id": ..., "lifecycle-state": ...}}`; top-level
+  `id`/`lifecycle-state` fields never occur and are refused.
+
+The committed `oci-state-version-recovery.sh` implements the corrected
+procedure:
 
 1. Require the source to be exactly this run's live-acceptance state key
    (present) and read its current version id from `object head`.
@@ -299,7 +365,9 @@ package**. Therefore:
 - [ ] Version ids observed:
 - [ ] STATE-RECOVERY evidence retained at:
 - [ ] TF_VALIDATION_EXPECTED_KMS_KEY_ID used (transcribed from tfvars):
+- [ ] TF_VALIDATION_KMS_COMPARTMENT_OCID used (transcribed from tfvars):
 - [ ] Bucket preconditions verified live (NoPublicAccess / versioning / CMK bound + ENABLED):
 - [ ] KMS ids confirmed:
+- [ ] Vault management endpoint used (as reported by `kms management vault list`):
 - [ ] IAM-DENIAL: NOT_RUN (deferred to federation phase)
 - [ ] Cleanup performed (ids deleted, when; separate approval reference):
