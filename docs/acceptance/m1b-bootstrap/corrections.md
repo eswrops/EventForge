@@ -58,3 +58,31 @@ none of them was applied to live GitHub, OCI, or Cloudflare.
   `prevent_destroy` on each, and fails if shared route/security resources are declared.
 - Fixed a real false-negative in the token-permissions check: jq's `//` operator swallowed the
   boolean `false` of `can_approve_pull_request_reviews`.
+
+## 5. Post-review interoperability corrections (2026-10-27, M1B.1.1 follow-up)
+
+Confirmed by operator review of the merged M1B.1.1 code:
+
+- **Environment creation command (P0).** The earlier `gh api -f/-F` form used dotted nested keys
+  (sent as literal key names) and string-valued `wait_timer`. Replaced with a `jq -n` JSON body
+  piped to `gh api --input -`, setting `wait_timer: 0` (integer),
+  `prevent_self_review: false` (required for the single-operator approval model),
+  the exact reviewer object, and the nested `deployment_branch_policy`. The preflight
+  `gh-environment-*` check now also verifies `prevent_self_review` is not `true`.
+- **KMS key-compartment input (P0).** The existing Vault lives in the **tenancy root**, which OCI
+  addresses with the tenancy OCID — the earlier compartment-regex validation would have rejected
+  the correct value. The validation now accepts `var.kms_key_compartment_ocid ==
+  var.tenancy_ocid` or a child compartment OCID, and the policy location is built conditionally
+  (`tenancy` vs `compartment id <ocid>`); both variants were plan-tested offline and the
+  policy-string tests and preflight check were updated to lock the new form.
+- **Numeric ID claim shape (P0).** GitHub has represented `repository_id` /
+  `repository_owner_id` as JSON numbers and as digit strings at different times. The WIF helper
+  now normalizes both sides with `tostring` before exact decimal comparison (`--arg`, not
+  `--argjson`), and fixtures cover both shapes plus a string-encoded wrong ID. The claim-inspection
+  script was already type-agnostic (`jq -r`); the protected live inspection remains authoritative
+  for the actual token shape.
+- **IAM draft tightening (P1).** The plan-identity statement that used `any {…}` (an OR that would
+  have satisfied the policy on `request.principal.type` alone) now uses `all {…}` throughout, and
+  the apply identity's `manage all-resources` was narrowed to the resource types the platform root
+  actually manages (network-security-groups, load-balancers, alarms, usage-budgets) pending
+  verification of exact resource-type names and claim keys during step-8 review.

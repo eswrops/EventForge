@@ -15,8 +15,10 @@ state_version_retention_days = 30
 # required Object Storage service policy automatically (hyphenated service
 # subject objectstorage-<region>, pinned to the exact key OCID).
 state_bucket_kms_key_id = "ocid1.key.oc1..replace-me"
-# The compartment holding the Vault key; may differ from compartment_ocid.
-kms_key_compartment_ocid = "ocid1.compartment.oc1..replace-me"
+# The compartment holding the Vault key. Use the tenancy OCID for the root
+# compartment (where the existing rust-api-secrets vault lives) or a child
+# compartment OCID; the policy location form is derived automatically.
+kms_key_compartment_ocid = "ocid1.tenancy.oc1..replace-me"
 
 # Create separate statements from the OCI identity-domain federation setup.
 # Both workload identities must be bound to the expected repository/environment

@@ -38,11 +38,14 @@ variable "state_bucket_kms_key_id" {
 
 variable "kms_key_compartment_ocid" {
   type        = string
-  description = "Compartment containing the state-bucket master encryption key (may differ from the bucket compartment)."
+  description = "Compartment containing the state-bucket master encryption key. The tenancy OCID names the root compartment (where the existing Vault lives); child compartments use their compartment OCID."
 
   validation {
-    condition     = can(regex("^ocid1\\.compartment\\.oc1\\.", var.kms_key_compartment_ocid))
-    error_message = "kms_key_compartment_ocid must be a compartment OCID."
+    condition = (
+      var.kms_key_compartment_ocid == var.tenancy_ocid ||
+      can(regex("^ocid1\\.compartment\\.oc1\\.", var.kms_key_compartment_ocid))
+    )
+    error_message = "Provide the tenancy OCID (root compartment) or a valid child compartment OCID."
   }
 }
 

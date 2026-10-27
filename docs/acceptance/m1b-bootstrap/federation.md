@@ -74,24 +74,28 @@ git-ignored `terraform.auto.tfvars`.
 
 ```text
 Allow any-user to inspect compartments in compartment id <compartment_ocid>
-  where any {request.principal.type = 'workload',
+  where all {request.principal.type = 'workload',
              request.principal.claims['github_environment'] = 'production-plan'}
 
 Allow any-user to read all-resources in compartment id <compartment_ocid>
-  where request.principal.type = 'workload'
-    and request.principal.claims['github_environment'] = 'production-plan'
+  where all {request.principal.type = 'workload',
+             request.principal.claims['github_environment'] = 'production-plan'}
 
 Allow any-user to read objects in compartment id <compartment_ocid>
-  where request.principal.type = 'workload'
-    and request.principal.claims['github_environment'] = 'production-plan'
+  where all {request.principal.type = 'workload',
+             request.principal.claims['github_environment'] = 'production-plan'}
     and target.bucket.name = 'eventforge-tfstate-prod'
 
 Allow any-user to manage objects in compartment id <compartment_ocid>
-  where request.principal.type = 'workload'
-    and request.principal.claims['github_environment'] = 'production-plan'
+  where all {request.principal.type = 'workload',
+             request.principal.claims['github_environment'] = 'production-plan'}
     and target.bucket.name = 'eventforge-tfstate-prod'
     and target.object.name matches /.*lock.*/i
 ```
+
+`all {…}` is mandatory here: `any {…}` is an OR and would satisfy the statement on
+`request.principal.type = 'workload'` alone, silently dropping the environment constraint. Every
+condition below is therefore conjunctive.
 
 `read objects` grants state reads; `manage objects` is restricted to lock objects by
 `target.object.name` (OCI supports object-level conditions for object operations; ListObjects is
@@ -105,17 +109,33 @@ the pattern tightened to it.
 
 ```text
 Allow any-user to read all-resources in compartment id <compartment_ocid>
-  where request.principal.type = 'workload'
-    and request.principal.claims['github_environment'] = 'production'
+  where all {request.principal.type = 'workload',
+             request.principal.claims['github_environment'] = 'production'}
 
-Allow any-user to manage all-resources in compartment id <compartment_ocid>
-  where request.principal.type = 'workload'
-    and request.principal.claims['github_environment'] = 'production'
-    and target.compartment.name != '<explicitly-excluded-if-needed>'
+# Writes are narrowed to the resource types the platform root actually manages
+# (NSGs and their rules, load balancer backends/listeners/certificates,
+# monitoring alarms, budgets) — deliberately not manage all-resources. Verify
+# each resource-type name against the OCI policy reference during step-8
+# review, and confirm the mapped claim key names at the first live exchange.
+Allow any-user to manage network-security-groups in compartment id <compartment_ocid>
+  where all {request.principal.type = 'workload',
+             request.principal.claims['github_environment'] = 'production'}
+
+Allow any-user to manage load-balancers in compartment id <compartment_ocid>
+  where all {request.principal.type = 'workload',
+             request.principal.claims['github_environment'] = 'production'}
+
+Allow any-user to manage alarms in compartment id <compartment_ocid>
+  where all {request.principal.type = 'workload',
+             request.principal.claims['github_environment'] = 'production'}
+
+Allow any-user to manage usage-budgets in compartment id <compartment_ocid>
+  where all {request.principal.type = 'workload',
+             request.principal.claims['github_environment'] = 'production'}
 
 Allow any-user to manage objects in compartment id <compartment_ocid>
-  where request.principal.type = 'workload'
-    and request.principal.claims['github_environment'] = 'production'
+  where all {request.principal.type = 'workload',
+             request.principal.claims['github_environment'] = 'production'}
     and target.bucket.name = 'eventforge-tfstate-prod'
 ```
 

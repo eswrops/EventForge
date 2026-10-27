@@ -119,7 +119,13 @@ else
     branch_policy_count="$(jq -r '."branch_policies" | length' <<<"${policies:-}" 2>/dev/null)"
     branch_main="$(jq -r --arg main main '[."branch_policies"[]."name"] | index($main) != null' <<<"${policies:-}" 2>/dev/null)"
     if [[ "${branch_main:-}" == "true" && "${branch_policy_count:-0}" == "1" && "$reviewer_ids" == "$expected_reviewer_ids" ]]; then
-      record "gh-environment-${name}" PASS "required reviewers with exact IDs (${reviewer_ids}), exactly one deployment branch policy restricted to main"
+      # jq's // operator treats false as empty, so read prevent_self_review directly.
+      prevent_self="$(jq -r '.prevent_self_review // "unset"' <<<"$env_json")"
+      if [[ "$prevent_self" == "true" ]]; then
+        record "gh-environment-${name}" BLOCKED "protection is complete, but prevent_self_review=true would deadlock the documented single-operator approval model; set it to false (github-security.md §4)"
+      else
+        record "gh-environment-${name}" PASS "required reviewers with exact IDs (${reviewer_ids}), exactly one deployment branch policy restricted to main, prevent_self_review=${prevent_self}"
+      fi
     else
       record "gh-environment-${name}" BLOCKED "exists but incomplete protection: reviewer ids '${reviewer_ids:-unknown}' (want ${expected_reviewer_ids}), branch policy count ${branch_policy_count:-unknown} (want exactly 1, main-only: ${branch_main:-unknown}); complete github-security.md §4 before attaching credentials"
     fi
@@ -328,12 +334,15 @@ else
 fi
 
 # The Object Storage -> KMS policy must use the hyphenated service subject,
-# scope to the key's compartment, and pin the exact key OCID.
-kms_statement="$(grep -A14 'resource "oci_identity_policy" "objectstorage_kms"' "$repo_root"/infra/bootstrap/main.tf | grep 'Allow service' | head -1)"
-if [[ "$kms_statement" == *"Allow service objectstorage-\${var.region} to use keys in compartment id \${var.kms_key_compartment_ocid} where target.key.id = '\${var.state_bucket_kms_key_id}'"* ]]; then
-  record "kms-policy-string" PASS "hyphenated service subject, key-compartment scope, exact target.key.id restriction"
+# the conditional policy location (tenancy root or key compartment), and pin
+# the exact key OCID.
+kms_statement="$(grep -A16 'resource "oci_identity_policy" "objectstorage_kms"' "$repo_root"/infra/bootstrap/main.tf | grep 'Allow service' | head -1)"
+if [[ "$kms_statement" == *"Allow service objectstorage-\${var.region} to use keys in \${local.kms_policy_location} where target.key.id = '\${var.state_bucket_kms_key_id}'"* ]] && \
+   grep -q 'var.kms_key_compartment_ocid == var.tenancy_ocid' "$repo_root"/infra/bootstrap/main.tf && \
+   grep -q '? "tenancy"' "$repo_root"/infra/bootstrap/main.tf; then
+  record "kms-policy-string" PASS "hyphenated service subject, tenancy/compartment location handling, exact target.key.id restriction"
 else
-  record "kms-policy-string" FAIL "the Object Storage KMS policy statement deviates from the verified form (hyphenated objectstorage-<region>, kms_key_compartment_ocid scope, target.key.id pin)"
+  record "kms-policy-string" FAIL "the Object Storage KMS policy statement deviates from the verified form (hyphenated objectstorage-<region>, conditional tenancy/compartment location, target.key.id pin)"
 fi
 
 if grep -qE 'default[[:space:]]*=[[:space:]]*false' "$repo_root"/infra/platform/variables.tf && \

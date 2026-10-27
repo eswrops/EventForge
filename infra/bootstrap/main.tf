@@ -37,6 +37,17 @@ resource "oci_objectstorage_object_lifecycle_policy" "terraform_state_versions" 
   }
 }
 
+# "tenancy" and "compartment id <ocid>" are distinct OCI policy locations:
+# the root compartment is addressed by the tenancy OCID with the bare
+# "tenancy" form, child compartments by "compartment id <ocid>".
+locals {
+  kms_policy_location = (
+    var.kms_key_compartment_ocid == var.tenancy_ocid
+    ? "tenancy"
+    : "compartment id ${var.kms_key_compartment_ocid}"
+  )
+}
+
 resource "oci_identity_policy" "objectstorage_kms" {
   compartment_id = var.tenancy_ocid
   name           = "eventforge-objectstorage-kms"
@@ -46,9 +57,9 @@ resource "oci_identity_policy" "objectstorage_kms" {
   # policy reference; without this statement, creating a bucket with
   # kms_key_id fails on the service side because Object Storage cannot use the
   # Vault key. Key permissions are scoped to the key's own compartment (which
-  # may differ from the bucket compartment) and pinned to the exact key OCID.
+  # may be the tenancy root) and pinned to the exact key OCID.
   statements = [
-    "Allow service objectstorage-${var.region} to use keys in compartment id ${var.kms_key_compartment_ocid} where target.key.id = '${var.state_bucket_kms_key_id}'",
+    "Allow service objectstorage-${var.region} to use keys in ${local.kms_policy_location} where target.key.id = '${var.state_bucket_kms_key_id}'",
   ]
 }
 
