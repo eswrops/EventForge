@@ -1,0 +1,205 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Guarded security-list update for the Scope-A corrections
+# (docs/acceptance/m1-local/scope-a-network-execution-approval.md §A4).
+#
+# The manifest pins the reviewed invariant: the security-list OCID and the
+# sha256 of the EXACT ingress and egress rule arrays observed when the
+# approval evidence was captured. Before any mutation the script re-reads the
+# live object (read-only) and aborts unless the live rule arrays are
+# byte-identical to the recorded ones — so an unexpected concurrent
+# security-list change always causes an abort, never a blind overwrite.
+# The update itself carries the freshly fetched ETag via --if-match, so any
+# mutation racing between the read and the write is rejected by the service
+# with HTTP 409 and the script surfaces that as a failure.
+#
+# Usage:
+#   eventforge-sl-update verify <manifest.json>   # read-only precondition check
+#   eventforge-sl-update apply --approval-record <file> <manifest.json>
+#
+# apply performs a PRODUCTION MUTATION and is doubly gated: the environment
+# attestation M1_SCOPE_A_APPROVED_BY must match the APPROVER line of a written
+# approval record (docs/acceptance/m1-local/approvals/) whose GATE is
+# SL-CORRECTION and which names the manifest's recorded rule-array hashes —
+# an approval tied to the immutable artifacts, never an env variable alone.
+
+OCI_BIN="${EVENTFORGE_OCI_BIN:-oci}"
+
+die() { echo "ABORT: $*" >&2; exit 1; }
+
+verify_approval_record() { # verify_approval_record <record-file> <manifest> <attestation>
+  local record="$1" manifest="$2" attestation="$3"
+  [[ -n "$attestation" ]] || die "M1_SCOPE_A_APPROVED_BY is not set — apply is refused without the operator attestation"
+  [[ -f "$record" ]] || die "approval record not found: $record"
+  grep -q '^GATE: SL-CORRECTION$' "$record" \
+    || die "approval record does not carry 'GATE: SL-CORRECTION'"
+  local ih eh
+  ih="$(jq -r '.recorded.ingress_hash' "$manifest")"
+  eh="$(jq -r '.recorded.egress_hash' "$manifest")"
+  if ! grep -Fq "$ih" "$record" || ! grep -Fq "$eh" "$record"; then
+    die "approval record does not name this manifest's recorded rule-array hashes ($ih / $eh)"
+  fi
+  local approver
+  approver="$(awk -F': ' '/^APPROVER:/{print $2; exit}' "$record")"
+  [[ "$attestation" == "$approver" ]] \
+    || die "M1_SCOPE_A_APPROVED_BY does not match the record's APPROVER line"
+}
+
+sha_rules() { # sha_rules <sl-json-file> <ingress|egress> → canonical hash
+  local sel='."data"."ingress-security-rules"'
+  [[ "$2" == "egress" ]] && sel='."data"."egress-security-rules"'
+  jq -S -c "$sel" "$1" | shasum -a 256 | awk '{print $1}'
+}
+
+# The manifest stores rule arrays exactly as the GET API returns them
+# (hyphenated keys) — that is the format every hash covers. The CLI update
+# call needs camelCase keys (see `oci network security-list update
+# --generate-param-json-input`), so apply converts deterministically here,
+# never by hand.
+rules_get_to_cli() { # rules_get_to_cli <file-with-rule-array-json> → camelCase JSON
+  jq '[.[] | {
+    description: .description,
+    protocol: .protocol,
+    source: (.source // null),
+    sourceType: (."source-type" // null),
+    destination: (.destination // null),
+    destinationType: (."destination-type" // null),
+    isStateless: (."is-stateless" // false),
+    icmpOptions: (."icmp-options" | if . then {code: .code, type: .type} else null end),
+    tcpOptions: (."tcp-options" | if . then {
+      destinationPortRange: (."destination-port-range" | if . then {min: .min, max: .max} else null end),
+      sourcePortRange: (."source-port-range" | if . then {min: .min, max: .max} else null end)
+    } else null end),
+    udpOptions: (."udp-options" | if . then {
+      destinationPortRange: (."destination-port-range" | if . then {min: .min, max: .max} else null end),
+      sourcePortRange: (."source-port-range" | if . then {min: .min, max: .max} else null end)
+    } else null end)
+  }]' "$1"
+}
+
+check_manifest_shape() {
+  jq -e '
+    (.security_list_id | type == "string" and startswith("ocid1.securitylist.")) and
+    (.display_name | type == "string") and
+    (.recorded.etag | type == "string" and length > 0) and
+    (.recorded.ingress_hash | test("^[0-9a-f]{64}$")) and
+    (.recorded.egress_hash | test("^[0-9a-f]{64}$")) and
+    (.proposed.ingress | type == "array") and
+    (.proposed.egress | type == "array")
+  ' "$1" >/dev/null || die "manifest is malformed: $1"
+}
+
+do_verify() { # do_verify <manifest> → echoes nothing; exits 0 when safe to update
+  local manifest="$1"
+  check_manifest_shape "$manifest"
+  local id want_ih want_eh live fresh_etag live_ih live_eh
+  id="$(jq -r '."security_list_id"' "$manifest")"
+  want_ih="$(jq -r '.recorded.ingress_hash' "$manifest")"
+  want_eh="$(jq -r '.recorded.egress_hash' "$manifest")"
+
+  local tmp
+  tmp="$(mktemp)"
+  chmod 600 "$tmp"
+  # shellcheck disable=SC2086
+  if ! "$OCI_BIN" network security-list get --security-list-id "$id" > "$tmp" 2>/dev/null; then
+    rm -f "$tmp"
+    die "cannot read security list $id (listing failure is never treated as absence)"
+  fi
+
+  live="$(jq -r '."data" | ."display-name"' "$tmp")"
+  fresh_etag="$(jq -r '.etag' "$tmp")"
+  live_ih="$(sha_rules "$tmp" ingress)"
+  live_eh="$(sha_rules "$tmp" egress)"
+  rm -f "$tmp"
+
+  [[ "$live" == "$(jq -r '."display_name"' "$manifest")" ]] \
+    || die "live object ($live) is not the reviewed security list"
+
+  # The concurrent-change guard: the live rule arrays must still be exactly
+  # the arrays the approval evidence recorded. Anything else aborts.
+  [[ "$live_ih" == "$want_ih" ]] || die "live INGRESS rules differ from the approved evidence (expected $want_ih, live $live_ih) — unexpected concurrent security-list change"
+  [[ "$live_eh" == "$want_eh" ]] || die "live EGRESS rules differ from the approved evidence (expected $want_eh, live $live_eh) — unexpected concurrent security-list change"
+
+  # If the target state is already in place, report convergence instead of
+  # issuing a no-op mutation.
+  local prop_ih prop_eh
+  prop_ih="$(jq -S -c '."proposed"."ingress"' "$manifest" | shasum -a 256 | awk '{print $1}')"
+  prop_eh="$(jq -S -c '."proposed"."egress"' "$manifest" | shasum -a 256 | awk '{print $1}')"
+  if [[ "$live_ih" == "$prop_ih" && "$live_eh" == "$prop_eh" ]]; then
+    echo "already-converged"
+    exit 0
+  fi
+
+  echo "$fresh_etag"
+}
+
+main() {
+  case "${1:-}" in
+    verify)
+      manifest="${2:-}"
+      [[ -n "$manifest" && -f "$manifest" ]] || { echo "usage: $0 verify <manifest.json>" >&2; exit 64; }
+      etag="$(do_verify "$manifest")" || exit $?
+      if [[ "$etag" == "already-converged" ]]; then
+        echo "verify: already converged, no update needed"
+      else
+        echo "verify: preconditions hold; fresh ETag $etag"
+      fi
+      ;;
+    apply)
+      shift
+      approval_record=""; manifest=""
+      while [[ $# -gt 0 ]]; do
+        case "$1" in
+          --approval-record) approval_record="$2"; shift 2 ;;
+          *) manifest="$1"; shift ;;
+        esac
+      done
+      [[ -n "$manifest" && -f "$manifest" ]] || { echo "usage: $0 apply --approval-record <file> <manifest.json>" >&2; exit 64; }
+      verify_approval_record "$approval_record" "$manifest" "${M1_SCOPE_A_APPROVED_BY:-}"
+      etag="$(do_verify "$manifest")" || exit $?
+      if [[ "$etag" == "already-converged" ]]; then
+        echo "apply: already converged, no update issued"
+        exit 0
+      fi
+      id="$(jq -r '."security_list_id"' "$manifest")"
+      ing="$(mktemp)"; eg="$(mktemp)"
+      trap 'rm -f "$ing" "$eg"' EXIT
+      chmod 600 "$ing" "$eg"
+      jq '."proposed"."ingress"' "$manifest" > "$ing"
+      jq '."proposed"."egress"' "$manifest" > "$eg"
+      rules_get_to_cli "$ing" > "$ing.cli" && mv "$ing.cli" "$ing"
+      rules_get_to_cli "$eg" > "$eg.cli" && mv "$eg.cli" "$eg"
+      echo "apply: updating $id with --if-match $etag"
+      "$OCI_BIN" network security-list update \
+        --security-list-id "$id" \
+        --ingress-security-rules "file://$ing" \
+        --egress-security-rules "file://$eg" \
+        --if-match "$etag" \
+        --force || die "update failed — OCI may have returned 409 (concurrent change); inspect and re-review, never auto-retry"
+      # Post-update verification: the live object must now hash to the proposed
+      # arrays; anything else is a failed change, never a claimed success.
+      tmp="$(mktemp)"
+      chmod 600 "$tmp"
+      "$OCI_BIN" network security-list get --security-list-id "$id" > "$tmp" 2>/dev/null \
+        || die "post-update read failed — state unknown, inspect manually"
+      post_ih="$(sha_rules "$tmp" ingress)"
+      post_eh="$(sha_rules "$tmp" egress)"
+      rm -f "$tmp"
+      prop_ih="$(jq -S -c '."proposed"."ingress"' "$manifest" | shasum -a 256 | awk '{print $1}')"
+      prop_eh="$(jq -S -c '."proposed"."egress"' "$manifest" | shasum -a 256 | awk '{print $1}')"
+      [[ "$post_ih" == "$prop_ih" && "$post_eh" == "$prop_eh" ]] \
+        || die "post-update rule arrays do not match the proposal — change NOT verified, inspect manually"
+      echo "apply: update verified (rule arrays match the approved proposal)"
+      ;;
+    *)
+      echo "usage: $0 verify <manifest.json> | apply --approval-record <file> <manifest.json>" >&2
+      exit 64
+      ;;
+  esac
+}
+
+# Sourcing this file (offline tests) defines the functions without running.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+  main "$@"
+fi

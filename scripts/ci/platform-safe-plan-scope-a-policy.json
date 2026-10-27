@@ -1,0 +1,59 @@
+{
+  "protected_imports": [
+    "^oci_core_vcn\\.existing$",
+    "^oci_core_subnet\\.(app|lb|mysql)$",
+    "^oci_core_instance\\.api(\\[.*\\])?$",
+    "^oci_mysql_mysql_db_system\\.existing$",
+    "^oci_load_balancer_load_balancer\\.existing$"
+  ],
+  "allow": [
+    {
+      "address_regex": "^oci_core_instance\\.api\\[\"vm1\"\\]$",
+      "actions": ["update"],
+      "allow_import_update": true,
+      "allowed_attribute_paths": ["create_vnic_details.nsg_ids"],
+      "expected_attribute_values": {
+        "create_vnic_details.nsg_ids": ["ocid1.networksecuritygroup.oc1.ap-hyderabad-1.aaaaaaaanq6ctqiztxpk6axqsdo73s55c4rr4ebnaesn2lxntbxkh66yql3a"]
+      },
+      "expected_attribute_values_before": {
+        "create_vnic_details.nsg_ids": []
+      }
+    },
+    {
+      "address_regex": "^oci_core_instance\\.api\\[\"vm2\"\\]$",
+      "actions": ["update"],
+      "allow_import_update": true,
+      "allowed_attribute_paths": ["create_vnic_details.nsg_ids"],
+      "expected_attribute_values": {
+        "create_vnic_details.nsg_ids": ["ocid1.networksecuritygroup.oc1.ap-hyderabad-1.aaaaaaaanq6ctqiztxpk6axqsdo73s55c4rr4ebnaesn2lxntbxkh66yql3a"]
+      },
+      "expected_attribute_values_before": {
+        "create_vnic_details.nsg_ids": []
+      }
+    },
+    {
+      "address_regex": "^oci_mysql_mysql_db_system\\.existing$",
+      "actions": ["update"],
+      "allow_import_update": true,
+      "allowed_attribute_paths": ["nsg_ids"],
+      "expected_attribute_values": {
+        "nsg_ids": ["ocid1.networksecuritygroup.oc1.ap-hyderabad-1.aaaaaaaay3iipwy7weycrbdb7slmiu44mmhvnxsrizrrs2w7dpag5wur6hga"]
+      },
+      "expected_attribute_values_before": {
+        "nsg_ids": []
+      }
+    },
+    {
+      "address_regex": "^oci_load_balancer_load_balancer\\.existing$",
+      "actions": ["update"],
+      "allow_import_update": true,
+      "allowed_attribute_paths": ["network_security_group_ids"],
+      "expected_attribute_values": {
+        "network_security_group_ids": ["ocid1.networksecuritygroup.oc1.ap-hyderabad-1.aaaaaaaauw37m2ked6uy6r6jx6mm72hmulv3frvtixstu7gwmoda5zua3a3a"]
+      },
+      "expected_attribute_values_before": {
+        "network_security_group_ids": []
+      }
+    }
+  ]
+}

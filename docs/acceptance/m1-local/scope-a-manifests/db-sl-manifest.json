@@ -1,0 +1,41 @@
+{
+  "security_list_id": "ocid1.securitylist.oc1.ap-hyderabad-1.aaaaaaaarwcfapns7orc6hvovfrt2md3xhko443sp5vz324b5c7pwiu7apoa",
+  "display_name": "rust-api-database-private",
+  "recorded": {
+    "etag": "5245ef64",
+    "ingress_hash": "15745b0db084c807627716105d5cbf7a57184c582a777c65150ccaa68189fabd",
+    "egress_hash": "416ab7f0baf5299edde0db3d41fa645e9aa03e64311225ea568e3232d8aaac36"
+  },
+  "proposed": {
+    "ingress": [
+      {
+        "description": null,
+        "icmp-options": null,
+        "is-stateless": false,
+        "protocol": "6",
+        "source": "10.0.2.0/24",
+        "source-type": "CIDR_BLOCK",
+        "tcp-options": {
+          "destination-port-range": {
+            "max": 3306,
+            "min": 3306
+          },
+          "source-port-range": null
+        },
+        "udp-options": null
+      }
+    ],
+    "egress": [
+      {
+        "description": null,
+        "destination": "0.0.0.0/0",
+        "destination-type": "CIDR_BLOCK",
+        "icmp-options": null,
+        "is-stateless": false,
+        "protocol": "all",
+        "tcp-options": null,
+        "udp-options": null
+      }
+    ]
+  }
+}
