@@ -20,3 +20,8 @@ dist/
 target/
 acceptance-report.json
 
+
+# Terraform plan artifacts (the guarded plan flow writes to protected evidence
+# directories outside the repository; these cover any local scratch copy).
+tfplan.bin
+tfplan.json

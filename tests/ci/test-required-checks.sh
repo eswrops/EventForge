@@ -26,7 +26,7 @@ grep -Fq 'name: Format and validate (${{ matrix.root }})' "$wf" \
 grep -Fq 'name: CI script and workflow checks' "$wf" \
   || fail "ci-scripts job name drifted"
 matrix_roots="$(sed -n 's/^[[:space:]]*root:[[:space:]]*\[\(.*\)\]$/\1/p' "$wf" | tr -d ' ')"
-[[ "$matrix_roots" == "infra/bootstrap,infra/platform,infra/frontend" ]] \
+[[ "$matrix_roots" == "infra/bootstrap,infra/platform,infra/frontend,infra/iam" ]] \
   || fail "matrix roots drifted: '$matrix_roots'"
 
 # 3. PR validation stays credential-free: checkout must not persist the

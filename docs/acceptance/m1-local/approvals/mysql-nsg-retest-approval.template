@@ -1,0 +1,62 @@
+# MYSQL-NSG-RETEST — one-attempt procedure (NOT executed)
+
+> **Template.** Execution is REFUSED until the operator fills every `<fill>`
+> field. This is a SEPARATE approval from MYSQL-NSG-IAM and requires that
+> approval to be already executed and verified. Exactly ONE new
+> `UPDATE_DBSYSTEM` attempt is authorized by this record; a failure consumes
+> it. See [../b5-mysql-nsg-diagnosis.md](../b5-mysql-nsg-diagnosis.md).
+
+## Grant
+
+- Approved by: `<operator name>`
+- Grant phrase: `<verbatim operator grant>`
+- Timestamp (UTC): `<YYYY-MM-DDTHH:MM:SSZ>`
+- MYSQL-NSG-IAM execution reference (policy names + apply timestamp): `<fill>`
+
+## Preconditions (all must pass before the attempt)
+
+1. Read back MySQL NSG memberships: `oci mysql db-system get --db-system-id
+   ocid1.mysqldbsystem.oc1.ap-hyderabad-1.aaaaaaaaes3clz2baohp34kuulobnhrp3cnz33bicso6r4syj7npztnvj2gq`
+   → `lifecycle-state = ACTIVE`, `nsg-ids = []`.
+2. `eventforge-db-nsg` still exists and is AVAILABLE
+   (`ocid1.networksecuritygroup.oc1.ap-hyderabad-1.aaaaaaaay3iipwy7weycrbdb7slmiu44mmhvnxsrizrrs2w7dpag5wur6hga`).
+3. Both required IAM policies are ACTIVE and their statements read back exactly
+   as reviewed (`oci iam policy get` for `eventforge-mysql-nsg-membership` and
+   `eventforge-mysql-vnic-update`).
+4. `m1-verify.sh` 18 PASS / 0 FAIL.
+
+## The attempt (exactly one)
+
+Method: guarded Terraform apply in `infra/platform` after re-adding
+`nsg_ids = [oci_core_network_security_group.db.id]` to
+`oci_mysql_mysql_db_system.existing` in `imported_resources.tf` — the same
+SHA-bound PLATFORM-APPLY gate used by Scope A (plan must show exactly 1
+in-place update on `oci_mysql_mysql_db_system.existing`, attribute
+`nsg_ids` only, via the scope-A attribute-level checker restricted to this
+address).
+
+- Expected resource diff: `nsg_ids: [] → [eventforge-db-nsg]`, nothing else.
+- Plan SHA-256: `<sha256>` · Commit: `<sha>`
+- Do NOT use a bare CLI update; the Terraform path keeps state and config
+  convergent.
+
+## Verification after the attempt
+
+1. The UPDATE_DBSYSTEM work request reaches **SUCCEEDED**
+   (`oci mysql work-request get --work-request-id <new-ocid>`). If it FAILS
+   again, capture `work-request-error list` and STOP — the attempt is consumed.
+2. `oci mysql db-system get` → `nsg-ids` contains `eventforge-db-nsg`.
+3. App→MySQL connectivity from BOTH VMs (protocol-level greeting via the app
+   subnet, e.g. the Scope-A `a3`-style test) — must still pass through the
+   app-NSG→db-NSG 3306 pairing.
+4. `m1-verify.sh` 18 PASS / 0 FAIL; state lineage unchanged; plan clean.
+
+## Explicitly out of scope
+
+- **No security-list change.** The db SL's subnet-wide TCP 3306 rule is NOT
+  removed or modified by this retest. Tightening it (removing the transitional
+  3306 permission) is a separate, later, separately reviewed network-security
+  change requiring its own SL-CORRECTION approval, only after the NSG pairing
+  has an observation window.
+- No listener/certificate/backend/DNS/scope-B change; no VM/LB changes; no
+  IAM changes beyond the already-executed MYSQL-NSG-IAM set.
