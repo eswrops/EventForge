@@ -1,0 +1,65 @@
+name: OCI WIF exchange probe
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Protected environment to probe the exchange in
+        required: true
+        type: choice
+        default: production-plan
+        options:
+          - production-plan
+          - production
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  probe:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    concurrency:
+      group: oci-wif-exchange-probe-${{ inputs.environment }}
+      cancel-in-progress: false
+    env:
+      OCI_REGION: ${{ vars.OCI_REGION }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Exchange GitHub identity for OCI RPST
+        env:
+          OCI_WIF_CONFIG_JSON: ${{ secrets.OCI_WIF_CONFIG_JSON }}
+        run: scripts/ci/configure-oci-wif.sh
+      - name: Observe the actual RPST claim mapping (sanitized)
+        run: |
+          umask 077
+          rpst_payload="$(cut -d. -f2 "$RUNNER_TEMP/oci-rpst.jwt" | tr '_-' '/+' \
+            | awk '{ l = length($0); m = l % 4; if (m == 2) print $0 "=="; else if (m == 3) print $0 "="; else print }' \
+            | base64 --decode 2>/dev/null || true)"
+          echo "### RPST claim mapping" >> "$GITHUB_STEP_SUMMARY"
+          # Only claim names and the workload-context values are printed; the
+          # token itself, its signature, and any embedded JWK material are not.
+          jq '{claim_names: (keys | sort),
+              var_name: .["var_name"],
+              var_ext_environment: .["var_ext_environment"],
+              var_ext_repository: .["var_ext_repository"],
+              var_ext_ref: .["var_ext_ref"],
+              exp: .exp, iat: .iat}' <<<"$rpst_payload" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Probe OCI API authorization (expected DENIED before Stage-2 IAM)
+        run: |
+          # No IAM policy exists for the workload principal yet (Stage 2 is
+          # gated). A successful token exchange is not proof of API
+          # authorization: this probe must FAIL with an authorization error,
+          # which is exactly the least-privilege state we want to observe.
+          set +e
+          out="$(oci os ns get 2>&1)"
+          rc=$?
+          set -e
+          if [ $rc -eq 0 ]; then
+            echo "UNEXPECTED SUCCESS: the workload principal called the OCI API with no Stage-2 policy. This is a security gate failure."
+            exit 1
+          fi
+          echo "Exchange-to-API probe denied as expected (exit $rc). First error line:"
+          echo "$out" | grep -m1 -oE 'NotAuthenticatedOrAuthorized|NotAuthorizedOrNotFound|Authorization failed[^\"]*|Error returning [^\"]*' || echo "$out" | head -3
