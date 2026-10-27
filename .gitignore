@@ -6,7 +6,15 @@ crash.log
 *.auto.tfvars
 *.auto.tfvars.json
 backend.hcl
-infra/platform/imported_resources.tf
+backend.hcl.*
+# Operator-local variable files carry credentials (MySQL admin pair,
+# Cloudflare token) — never tracked under any name:
+terraform.tfvars
+terraform.tfvars.json
+*.tfvars.local
+# infra/platform/imported_resources.tf is TRACKED (declarative
+# reproducibility): its discovered values live in the ignored
+# imported.auto.tfvars (matched by *.auto.tfvars above).
 .env
 dist/
 target/

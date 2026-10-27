@@ -23,13 +23,16 @@ resource "oci_monitoring_alarm" "unhealthy_backends" {
 }
 
 resource "oci_budget_budget" "monthly" {
-  compartment_id        = var.compartment_ocid
-  target_compartment_id = var.compartment_ocid
-  target_type           = "COMPARTMENT"
-  display_name          = "eventforge-monthly"
-  description           = "EventForge monthly OCI cost warning budget."
-  amount                = var.monthly_budget_amount
-  reset_period          = "MONTHLY"
+  # OCI budgets are managed at the tenancy ROOT compartment only; the tracked
+  # compartment is named via targets (target_compartment_id is deprecated and
+  # CreateBudget rejects child-compartment placement with 400 InvalidParameter).
+  compartment_id = var.tenancy_ocid
+  targets        = [var.compartment_ocid]
+  target_type    = "COMPARTMENT"
+  display_name   = "eventforge-monthly"
+  description    = "EventForge monthly OCI cost warning budget."
+  amount         = var.monthly_budget_amount
+  reset_period   = "MONTHLY"
 }
 
 resource "oci_budget_alert_rule" "actual_75" {
