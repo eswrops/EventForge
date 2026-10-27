@@ -49,4 +49,11 @@ if grep -qE 'terraform.*(apply|migrate-state|force-copy)' "$init_probe"; then
   fail "operator backend-init probe must not write or migrate production state"
 fi
 
+recovery_doc="$repo_root/docs/acceptance/m1b-bootstrap/state-recovery.md"
+grep -q 'init -migrate-state -backend-config=backend.hcl' "$recovery_doc" \
+  || fail "recovery procedure must use explicit backend migration"
+if grep -q 'init -input=false -migrate-state' "$recovery_doc"; then
+  fail "migration procedure must retain the operator copy confirmation"
+fi
+
 echo "OCI backend configuration contract tests passed"

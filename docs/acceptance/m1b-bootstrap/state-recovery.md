@@ -31,13 +31,15 @@ After explicit `STATE-MIGRATION` approval, migrate **only** the bootstrap root:
 ```bash
 OCI_CLI_CONFIG=/Users/eswr/.oci/config \
   /Users/eswr/tools/terraform/1.12.2/terraform -chdir=infra/bootstrap \
-  init -input=false -migrate-state -backend-config=backend.hcl
+  init -migrate-state -backend-config=backend.hcl
 ```
 
 - Bootstrap migrates its existing eight-resource state into `bootstrap/terraform.tfstate`.
   Platform and frontend retain independent keys and are initialized only when their own approved
   workflows need them. Do not use `init -reconfigure`, `init -force-copy`, `state push -force`,
   or `force-unlock` as a migration substitute.
+- `-input=false` is intentionally omitted: Terraform must present the copy confirmation and the
+  operator must answer only after the displayed destination matches this approved bucket and key.
 - The API-key file stays in the OCI CLI configuration; neither `backend.hcl` nor Git contain a
   private-key path, fingerprint, or credential value.
 
