@@ -786,7 +786,7 @@ run_case main "$verify_script"
 expect_fail main
 grep -qi "historical versions or a delete marker" "$cdir/main.err" || die "previous-version reuse must be refused"
 setup_case absence-delete-marker
-make_delete_marker_only_fixture > "$cdir/versions.json"
+make_delete_marker_only_fixture items > "$cdir/versions.json"
 run_case main "$verify_script"
 expect_fail main
 grep -qi "historical versions or a delete marker" "$cdir/main.err" || die "delete-marker reuse must be refused"
