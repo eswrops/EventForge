@@ -1,17 +1,11 @@
 name: Terraform
 
+# Every pull request targeting main runs all four jobs — including docs-only
+# PRs — because these job names are the required status checks of the branch
+# protection policy. A path filter here would let any PR skip a required
+# check (tests/ci/test-required-checks.sh guards this).
 on:
   pull_request:
-    paths:
-      - 'infra/**'
-      - '.github/workflows/terraform.yml'
-      - '.github/workflows/terraform-plan.yml'
-      - '.github/workflows/terraform-apply.yml'
-      - '.github/workflows/oci-backend-validation.yml'
-      - 'scripts/ci/**'
-      - 'scripts/acceptance/**'
-      - 'tests/ci/**'
-      - 'tests/acceptance/**'
 
 permissions:
   contents: read
@@ -26,6 +20,9 @@ jobs:
         root: [infra/bootstrap, infra/platform, infra/frontend]
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # PR validation is credential-free: no token is left on the runner.
+          persist-credentials: false
       - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3.1.2
         with:
           terraform_version: 1.12.2
@@ -45,6 +42,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: '1.24.0'

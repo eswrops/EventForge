@@ -1,0 +1,25 @@
+{
+  "comment": "The exact third-party actions this repository may run, pinned to full commit SHAs. tests/ci/test-required-checks.sh fails if any workflow references an action outside this set, and the repository Actions restriction (github-security.md §6) is configured from this file. Verify each SHA against its repository tag/branch before updating.",
+  "actions": {
+    "actions/checkout@11d5960a326750d5838078e36cf38b85af677262": {
+      "version": "v4.4.0",
+      "purpose": "Check out the PR or dispatch ref in every workflow.",
+      "credential_note": "The pull_request workflow sets persist-credentials: false; dispatch workflows keep the default only where later steps need git operations (none currently push)."
+    },
+    "actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff": {
+      "version": "v5.6.0",
+      "purpose": "Install Go for actionlint in the CI script checks job.",
+      "credential_note": "No credentials."
+    },
+    "hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd": {
+      "version": "v3.1.2",
+      "purpose": "Install the CI-pinned Terraform 1.12.2.",
+      "credential_note": "terraform_wrapper disabled; no cloud credentials are injected by this action."
+    },
+    "dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec": {
+      "version": "stable (branch tip at pin time)",
+      "purpose": "Rust toolchain for the release and frontend workflows (trusted dispatch/tag contexts only).",
+      "credential_note": "No credentials."
+    }
+  }
+}
