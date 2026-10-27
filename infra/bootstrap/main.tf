@@ -1,4 +1,8 @@
 resource "oci_objectstorage_bucket" "terraform_state" {
+  # Object Storage must be authorized to use the exact CMK before it creates
+  # the encrypted bucket. This explicit ordering avoids a service-side race.
+  depends_on = [oci_identity_policy.objectstorage_kms]
+
   compartment_id = var.compartment_ocid
   namespace      = var.object_storage_namespace
   name           = var.state_bucket_name
