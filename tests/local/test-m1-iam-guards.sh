@@ -177,6 +177,142 @@ recheck_line="$(grep -n 'offline-contract-recheck" "saved plan revalidated' "$ap
 (( record_line < scope_line && scope_line < recheck_line )) \
   || fail "the scope-decision gate must sit between the approval-record gate and the contract recheck"
 
+# -------------------- committed approval template end-to-end regressions ----
+# The scope-decision gate must hold against the ACTUAL committed approval
+# template, not only synthetic fixtures: a byte-identical template copy (or a
+# copy with every other field filled) must fail, only the operator's
+# deliberate replacement of the placeholder may pass it, no script may insert
+# the decision, and acceptance alone bypasses no other binding.
+template="$repo_root/docs/acceptance/m1-local/approvals/mysql-nsg-iam-approval.template"
+[[ -f "$template" ]] || fail "committed MYSQL-NSG-IAM approval template must exist"
+[[ "$(grep -c 'SCOPE_DECISION:' "$template")" -eq 1 ]] \
+  || fail "the committed template must carry exactly one SCOPE_DECISION line (the placeholder)"
+grep -q '^SCOPE_DECISION: <OPERATOR_DECISION_REQUIRED>$' "$template" \
+  || fail "the committed template's only SCOPE_DECISION line must be the placeholder"
+
+mapfile -t tstmts < <("$repo_root/scripts/ci/assert-iam-plan.sh" \
+  --policy "$repo_root/scripts/ci/iam-plan-contract.json" \
+  --var "db_compartment_ocid=ocid1.compartment.oc1..placeholder-for-tests" \
+  --var "tenancy_ocid=ocid1.tenancy.oc1..placeholder-for-tests" \
+  --print-statements)
+[[ "${#tstmts[@]}" -eq 2 ]] || fail "expected 2 rendered statements for template regressions"
+printf 'binary-plan-placeholder' > "$work/tpl-plan.tfplan"
+tpl_sha="$(shasum -a 256 "$work/tpl-plan.tfplan" | awk '{print $1}')"
+tpl_commit="$(git -C "$repo_root" rev-parse HEAD)"
+
+# fill_template <out> <decision|placeholder> <plan-sha> <commit> <stmt1> <stmt2>
+# Simulates exactly the operator's deliberate edits — the only sanctioned way
+# a template copy becomes a decision record.
+fill_template() {
+  local out="$1" decision="$2" psha="$3" pcommit="$4" s1="$5" s2="$6" line
+  : > "$out"
+  while IFS= read -r line; do
+    if [[ "$decision" != "placeholder" ]]; then
+      line="${line//SCOPE_DECISION: <OPERATOR_DECISION_REQUIRED>/SCOPE_DECISION: $decision}"
+    fi
+    line="${line//<operator name>/test-operator}"
+    line="${line//<verbatim operator grant>/template-regression-grant}"
+    line="${line//<YYYY-MM-DDTHH:MM:SSZ>/2026-10-28T00:00:00Z}"
+    line="${line//<sha256>/$psha}"
+    line="${line//<sha>/$pcommit}"
+    line="${line//<paste rendered statement 1 from m1-iam-plan.sh evidence>/$s1}"
+    line="${line//<paste rendered statement 2 from m1-iam-plan.sh evidence>/$s2}"
+    printf '%s\n' "$line" >> "$out"
+  done < "$template"
+}
+tpl_record_ok() { # all bindings the apply's approval-record gate demands
+  m1_verify_approval_record "$1" "MYSQL-NSG-IAM" "$tpl_sha" "$tpl_commit" \
+    "oci_identity_policy.mysql_nsg_membership" "oci_identity_policy.mysql_vnic_update" \
+    "${tstmts[0]}" "${tstmts[1]}" "iam/terraform.tfstate absent"
+}
+
+# Case 1: a byte-identical copy of the committed template must FAIL.
+cp "$template" "$work/tpl-unchanged.md"
+cmp -s "$template" "$work/tpl-unchanged.md" || fail "template copy must be byte-identical"
+m1_verify_scope_decision "$work/tpl-unchanged.md" 2>/dev/null \
+  && fail "an unchanged template copy must fail the scope-decision gate"
+
+# Case 2: every other field populated, placeholder unchanged — the record
+# satisfies every OTHER approval requirement, and ONLY the scope gate refuses.
+fill_template "$work/tpl-populated-placeholder.md" placeholder "$tpl_sha" "$tpl_commit" "${tstmts[0]}" "${tstmts[1]}"
+tpl_record_ok "$work/tpl-populated-placeholder.md" \
+  || fail "a populated template with the placeholder unchanged must satisfy every other approval requirement"
+m1_verify_scope_decision "$work/tpl-populated-placeholder.md" 2>/dev/null \
+  && fail "a populated template with the placeholder unchanged must fail the scope-decision gate"
+
+# Cases 3-4: ORACLE_FIRST and DECLINED are refusals, never acceptances.
+for d in ORACLE_FIRST DECLINED; do
+  fill_template "$work/tpl-$d.md" "$d" "$tpl_sha" "$tpl_commit" "${tstmts[0]}" "${tstmts[1]}"
+  m1_verify_scope_decision "$work/tpl-$d.md" 2>/dev/null \
+    && fail "template decision $d must be refused"
+done
+
+# Case 5: the deliberate ACCEPT_TENANCY_WIDE_VNIC replacement is the ONLY way
+# through — with every other approval requirement matching the reviewed plan.
+fill_template "$work/tpl-accepted.md" ACCEPT_TENANCY_WIDE_VNIC "$tpl_sha" "$tpl_commit" "${tstmts[0]}" "${tstmts[1]}"
+m1_verify_scope_decision "$work/tpl-accepted.md" \
+  || fail "a deliberately accepted template must pass the scope-decision gate"
+tpl_record_ok "$work/tpl-accepted.md" \
+  || fail "a deliberately accepted template must pass the approval-record gate"
+
+# Case 6: duplicate or conflicting decisions on an otherwise accepted
+# template are refusals.
+fill_template "$work/tpl-dup.md" ACCEPT_TENANCY_WIDE_VNIC "$tpl_sha" "$tpl_commit" "${tstmts[0]}" "${tstmts[1]}"
+echo "SCOPE_DECISION: ACCEPT_TENANCY_WIDE_VNIC" >> "$work/tpl-dup.md"
+m1_verify_scope_decision "$work/tpl-dup.md" 2>/dev/null \
+  && fail "duplicate template decisions must be refused"
+fill_template "$work/tpl-conflict.md" ACCEPT_TENANCY_WIDE_VNIC "$tpl_sha" "$tpl_commit" "${tstmts[0]}" "${tstmts[1]}"
+echo "SCOPE_DECISION: DECLINED" >> "$work/tpl-conflict.md"
+m1_verify_scope_decision "$work/tpl-conflict.md" 2>/dev/null \
+  && fail "conflicting template decisions must be refused"
+
+# Case 7: no script or helper may know the placeholder or write a decision
+# into a record — the operator's edit is the only sanctioned insertion path.
+if grep -rq 'OPERATOR_DECISION_REQUIRED' "$repo_root/scripts"; then
+  fail "no script may reference the scope-decision placeholder"
+fi
+if grep -rniE 'SCOPE_DECISION[^$]*(>>|tee )' "$repo_root/scripts"; then
+  fail "no script may write a SCOPE_DECISION line into a record"
+fi
+if grep -rn 'cp .*mysql-nsg-iam-approval' "$repo_root/scripts"; then
+  fail "no script may copy the approval template on the operator's behalf"
+fi
+
+# Case 8: acceptance alone bypasses nothing — with the fully accepted template
+# record in hand, a moved commit, changed plan content, a missing statement, a
+# consumed plan, or changed state ownership each still refuses offline.
+run_apply_capture() { # run_apply_capture <stderr-file> <metadata> <record>
+  ( cd "$work" && M1_EVIDENCE_DIR="$work/evidence-tpl" M1_EVIDENCE_ROOT="$work/evidence-root-tpl" \
+      M1_IAM_APPLY_APPROVED_BY=test-operator \
+      "$repo_root/scripts/local/m1-iam-apply.sh" "$work/tpl-plan.tfplan" "$2" "$3" ) 2>"$1"
+}
+tpl_meta() { # tpl_meta <sha> <commit> <expected-state> <applied>
+  jq -n --arg p "$work/tpl-plan.tfplan" --arg sha "$1" --arg c "$2" --arg es "$3" --arg ap "$4" \
+    '{plan:$p,plan_sha256:$sha,commit:$c,safe_plan:"PASS",expected_state:$es,applied:($ap=="true"),
+      apply_evidence:null,terraform_version:"1.12.2",
+      bucket:"eventforge-tfstate-prod",state_key:"iam/terraform.tfstate"}'
+}
+tpl_meta "$tpl_sha" "$tpl_commit" absent false > "$work/tpl-meta.json"
+tamper() { # tamper <gate-name> <expected-state> <applied> <sha?> <commit?>
+  local gate="$1" es="$2" ap="$3" sha="${4:-$tpl_sha}" commit="${5:-$tpl_commit}" err="$work/tpl-tamper.err"
+  tpl_meta "$sha" "$commit" "$es" "$ap" > "$work/tpl-meta-tampered.json"
+  if run_apply_capture "$err" "$work/tpl-meta-tampered.json" "$work/tpl-accepted.md"; then
+    fail "accepted template must not bypass the $gate check"
+  fi
+  grep -q "$gate" "$err" || { cat "$err" >&2; fail "refusal must name the $gate gate"; }
+}
+tamper metadata-plan-sha absent false 0000tampered "$tpl_commit"
+tamper metadata-commit absent false "$tpl_sha" 0000movedcommit
+tamper metadata-expected-state present false
+tamper metadata-not-applied absent true
+# Statement binding: dropping one reviewed statement from the accepted record
+# must defeat the approval-record gate.
+grep -v "Statement 2" "$work/tpl-accepted.md" | grep -vF "${tstmts[1]}" > "$work/tpl-no-stmt2.md" || true
+if tpl_record_ok "$work/tpl-no-stmt2.md" 2>/dev/null; then
+  fail "the accepted template must not bypass the verbatim-statement binding"
+fi
+echo "ok: committed template end-to-end regressions (all eight mission cases)"
+
 # ------------------------------------------------- state-key absence proof (fail closed)
 # The proof must never infer absence from an authorization/service error, an
 # unparseable listing, historical object versions, or delete markers.

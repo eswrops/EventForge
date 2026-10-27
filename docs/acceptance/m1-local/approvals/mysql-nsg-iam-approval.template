@@ -1,5 +1,7 @@
 # MYSQL-NSG-IAM — approval record
 
+GATE: MYSQL-NSG-IAM
+
 > **Template.** Execution is REFUSED until the operator fills every
 > `<fill>` field below. Creating the two IAM policies is the only authorized
 > mutation. See [../b5-mysql-nsg-diagnosis.md](../b5-mysql-nsg-diagnosis.md)
@@ -25,19 +27,23 @@
 > delta: the MySQL service principal could in principle associate/disassociate
 > NSG memberships on the Test-compartment VNICs (two API VMs, load balancer).
 
-**Execution is REFUSED unless this record carries EXACTLY ONE standalone
-line, at top level, spelled character-for-character:**
+**Execution is REFUSED while the placeholder below remains. The operator
+must deliberately replace that placeholder line — in place, keeping it the
+record's ONLY line carrying the `SCOPE_DECISION` marker, standalone at top
+level — with the marker, a colon, one space, and exactly `ACCEPT_TENANCY_WIDE_VNIC`:**
 
 ```
-SCOPE_DECISION: ACCEPT_TENANCY_WIDE_VNIC
+SCOPE_DECISION: <OPERATOR_DECISION_REQUIRED>
 ```
 
 `scripts/local/m1-iam-apply.sh` validates this mechanically in its offline
-section, before any live access, and refuses: a missing line, a placeholder,
-`ORACLE_FIRST`, `DECLINED`, multiple or conflicting decisions, a decision
-quoted inside this commentary, or trailing text on the line. Nothing else
-(commentary, environment variables, a passing policy check) can grant this
-acceptance.
+section, before any live access, and refuses: a missing line, the untouched
+placeholder, `ORACLE_FIRST`, `DECLINED`, multiple or conflicting decisions, a
+decision quoted inside this commentary, or trailing text on the line. An
+untouched copy of this template authorizes nothing — a byte-identical copy
+always fails the gate, and no script or helper may insert the decision on the
+operator's behalf. Nothing else (commentary, environment variables, a passing
+policy check) can grant this acceptance.
 
 Recording that line asserts: *I have read the scope analysis above and ACCEPT
 the tenancy-wide effective scope of `eventforge-mysql-vnic-update` as the
@@ -53,8 +59,11 @@ radius, operational consequences, reversibility) is in §10.
 
 ## Grant
 
-- Approved by: `<operator name>` (must equal the `M1_IAM_APPLY_APPROVED_BY`
-  environment attestation at apply time)
+APPROVER: <operator name>
+
+The `APPROVER` value must equal the `M1_IAM_APPLY_APPROVED_BY`
+environment attestation at apply time.
+
 - Grant phrase: `<verbatim operator grant>`
 - Timestamp (UTC): `<YYYY-MM-DDTHH:MM:SSZ>`
 - Source commit (must be the full merged main commit containing
@@ -65,7 +74,7 @@ radius, operational consequences, reversibility) is in §10.
 - Root: `infra/iam` — plan **2 to add, 0 to change, 0 to destroy**
 - Saved-plan SHA-256 (generated at the pinned commit by `m1-iam-plan.sh`;
   recorded in the plan metadata): `<sha256>`
-- Expected initial state: `iam/terraform.tfstate` **absent** (fresh root;
+- Expected initial state: iam/terraform.tfstate absent (fresh root;
   the apply refuses if the key exists)
 - Resources created (exactly these two addresses, no others):
   - `oci_identity_policy.mysql_nsg_membership` (compartment: Test,
