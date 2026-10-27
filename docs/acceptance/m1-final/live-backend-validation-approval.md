@@ -1,9 +1,13 @@
 # Live backend validation — approval package (PREPARED, NOT EXECUTED)
 
 Status: **HARDENED PACKAGE 2026-10-27, SAFETY PATCH 1 2026-10-27, OCI CLI
-CONTRACT FIX 1 2026-10-27 — awaiting explicit operator approval. Nothing in
-this package has been executed against OCI beyond read-only response-shape
-inspection with the operator's existing authorized profile.** Scope: live
+CONTRACT FIX 1 2026-10-27, COPY CONTRACT FIX 1 2026-10-27 — first live
+execution attempt 2026-10-27 (RUN_ID `20261027T120000Z-m1live`): STATE-LOCKING
+and STATE-CONTENTION PASSED; STATE-RECOVERY failed at argument parsing of the
+copy step (the CLI has no `--source-bucket`; no API call was made and no key
+beyond the step-1 validation state was written), which produced this copy
+contract fix. Awaiting re-execution on a FRESH RUN_ID after merge per §11.**
+Scope: live
 verification of **STATE-LOCKING, STATE-CONTENTION, and STATE-RECOVERY** on
 disposable keys only, plus read-only bucket/CMK verification. **IAM-DENIAL is
 NOT covered by this package** — it is deferred to the federation phase (§9);
@@ -27,8 +31,21 @@ before running anything and transcribes the merge commit into the §12 record.
   pagination, and KMS key lookup through the vault's actual management
   endpoint (see §8) — with the offline fixtures rewritten to the live-verified
   envelopes.
-- Merge commit: `2e2380a33b18515ad0a52e24d027d58702b06fac`
-  (verify: `git log --format='%H %s' -1 2e2380a`)
+- Copy contract fix 1: the focused PR that replaced the recovery script's
+  invalid `os object copy --source-bucket <bucket>` option with the
+  command group's required `--bucket-name <bucket>` option. Root cause
+  observed live 2026-10-27 during the first execution: OCI CLI 3.95.1 has no
+  `--source-bucket` option and aborts at argument parsing ("No such option
+  '--source-bucket'. Did you mean '--source-object-name'?") before any API
+  call — the copy never started and nothing was written. The verified
+  contract (`oci os object copy --help`: `--bucket-name` [required],
+  `--source-object-name` [required], `--source-version-id`,
+  `--destination-*`, `--destination-object-if-none-match-e-tag`,
+  `--wait-for-state` all present) is now asserted by the offline fixtures,
+  which reject any `--source-bucket` occurrence.
+- Merge commit: stamped after the copy contract fix merges (previous stamp:
+  `2e2380a33b18515ad0a52e24d027d58702b06fac`,
+  verify: `git log --format='%H %s' -1 2e2380a`)
 - Content hashes (sha256), verified before execution:
 
 | File | sha256 |
@@ -36,7 +53,7 @@ before running anything and transcribes the merge commit into the §12 record.
 | `scripts/ci/lib-oci-validation.sh` | `0760c2454f214a9c36d2ac44f2bb3f2aeefdc36367a3fc9618cd272ae5774570` |
 | `scripts/ci/verify-oci-backend.sh` | `f069bfea81c514a18f83fb02208eac372fce298268d50feeebe247287582bcca` |
 | `scripts/ci/verify-oci-backend-denied.sh` | `aa2130bec68fbc38b51a5258c3ff6f6bc8983c6d2c6bea953f60ffc551056512` |
-| `scripts/acceptance/oci-state-version-recovery.sh` | `47705b53341672aebbf542992fa3332ab9aece099cf6970c04b536fdb81daea3` |
+| `scripts/acceptance/oci-state-version-recovery.sh` | `b6a1289c92d17304c59904a6e3d4b215a95b6f6fe709b3264461408607e7f985` |
 
 - Executable: **Terraform v1.12.2 exactly**, selected via `TERRAFORM_BIN`
   (`/Users/eswr/tools/terraform/1.12.2/terraform`). The scripts refuse any

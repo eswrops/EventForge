@@ -134,7 +134,7 @@ trap on_signal INT TERM
 # (--destination-object-if-none-match-e-tag '*' makes the service reject it if
 # a concurrent writer created the destination after the absence check above).
 if ! oci "${VALIDATION_OCI_ARGS[@]}" os object copy \
-    --source-bucket "$VALIDATION_LIB_APPROVED_BUCKET" \
+    --bucket-name "$VALIDATION_LIB_APPROVED_BUCKET" \
     --source-object-name "$VALIDATION_STATE_KEY" \
     --source-version-id "$chosen_version_id" \
     --destination-bucket "$VALIDATION_LIB_APPROVED_BUCKET" \
