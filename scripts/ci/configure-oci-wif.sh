@@ -66,9 +66,11 @@ curl --fail --silent --show-error \
 
 # Protected workflow jobs must present GitHub's immutable subject exactly:
 # repo:<owner>@<owner_id>/<repo>@<repo_id>:environment:<environment>, with the
-# numeric claims matching. This rejects branch, tag, pull-request,
-# other-repository, renamed-repository, legacy name-only subjects,
-# wrong-audience and expired tokens before they reach the exchange endpoint.
+# numeric claims matching. GitHub has represented the numeric ID claims as
+# JSON numbers or digit strings at different times, so both sides are
+# normalized with tostring before exact decimal comparison. This rejects
+# branch, tag, pull-request, other-repository, renamed-repository, legacy
+# name-only subjects, wrong-audience and expired tokens before the exchange.
 jwt_payload="$(cut -d. -f2 "$token_path" | tr '_-' '/+' \
   | awk '{ l = length($0); m = l % 4; if (m == 2) print $0 "=="; else if (m == 3) print $0 "="; else print }' \
   | base64 --decode 2>/dev/null || true)"
@@ -81,13 +83,13 @@ if ! jq -e \
   --arg repository "$expected_repository" \
   --arg environment "$expected_environment" \
   --arg sub "$expected_sub" \
-  --argjson repository_owner_id "$repository_owner_id" \
-  --argjson repository_id "$repository_id" '
+  --arg repository_owner_id "$repository_owner_id" \
+  --arg repository_id "$repository_id" '
     (.iss == $issuer) and
     ((.aud == $audience) or ((.aud | type == "array") and any(.[]; . == $audience))) and
     (.repository == $repository) and
-    (.repository_id == $repository_id) and
-    (.repository_owner_id == $repository_owner_id) and
+    ((.repository_id | tostring) == $repository_id) and
+    ((.repository_owner_id | tostring) == $repository_owner_id) and
     (.environment == $environment) and
     (.sub == $sub) and
     (.exp | type == "number") and (.exp > now)

@@ -56,24 +56,35 @@ every federation exchange. Expected claims for both environments are in [federat
 
 ## 4. Environments — desired state ⛔ (does not exist yet)
 
-Create both environments exactly like this (idempotent; safe to re-run):
+Create both environments exactly like this (idempotent; safe to re-run). The nested body is sent
+as JSON because `gh api` does not interpret dotted field names (`deployment_branch_policy.x`
+would arrive as a literal key), `-f` sends strings where `wait_timer` requires an integer, and
+`prevent_self_review` must be explicit: `false` is required for the documented single-operator
+approval model — with it enabled, the sole maintainer could never approve their own dispatches.
 
 ```bash
 for ENV in production-plan production; do
-  gh api -X PUT repos/eswrops/EventForge/environments/$ENV \
-    -f wait_timer=0 \
-    -F reviewers[0][type]=User \
-    -F reviewers[0][id]=237514587 \
-    -F deployment_branch_policy.protected_branches=false \
-    -F deployment_branch_policy.custom_branch_policies=true
-  gh api -X POST repos/eswrops/EventForge/environments/$ENV/deployment-branch-policies -f name=main
+  jq -n '{
+    wait_timer: 0,
+    prevent_self_review: false,
+    reviewers: [
+      {type: "User", id: 237514587}
+    ],
+    deployment_branch_policy: {
+      protected_branches: false,
+      custom_branch_policies: true
+    }
+  }' | gh api -X PUT "repos/eswrops/EventForge/environments/$ENV" --input -
+
+  gh api -X POST "repos/eswrops/EventForge/environments/$ENV/deployment-branch-policies" -f name=main
 done
 ```
 
-Result per environment: deployment allowed **only from `main`**, one required reviewer, no wait
-timer (the reviewer approval is the gate). PR runs can never reach these environments: the
-workflow_dispatch workflows are gated on `github.ref == 'refs/heads/main'`, `pull_request` events
-never target an environment, and the deployment branch policy blocks any other ref.
+Result per environment: deployment allowed **only from `main`**, one required reviewer (id
+`237514587`), no wait timer (the reviewer approval is the gate), and self-review prevention off for
+the single-operator era. PR runs can never reach these environments: the workflow_dispatch
+workflows are gated on `github.ref == 'refs/heads/main'`, `pull_request` events never target an
+environment, and the deployment branch policy blocks any other ref.
 
 **Reviewer independence requirements** (record for every approval):
 

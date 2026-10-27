@@ -103,6 +103,13 @@ run_helper() {
   "$helper"
 }
 
+# GitHub has represented the numeric ID claims as JSON numbers and as digit
+# strings at different times; both shapes must pass exact decimal comparison.
+TEST_JWT="$(make_jwt "$(jq -c '."repository_id" = "777" | ."repository_owner_id" = "555"' <<<"$valid_claims")")" \
+  run_helper >/dev/null
+TEST_JWT="$(make_jwt "$(jq -c '."repository_id" = "778" | ."sub" = "repo:acme@555/eventforge@778:environment:production-plan"' <<<"$valid_claims")")" \
+  expect_failure 'string-encoded wrong repository id' run_helper
+
 TEST_CONFIG='{}' expect_failure 'missing configuration fields' run_helper
 TEST_CONFIG="$(jq -c 'del(."repository_owner_id")' <<<"$config")" expect_failure 'missing repository_owner_id' run_helper
 TEST_CONFIG="$(jq -c '."repository_id" = "not-a-number"' <<<"$config")" expect_failure 'non-numeric repository_id' run_helper
