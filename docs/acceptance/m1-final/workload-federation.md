@@ -19,11 +19,13 @@ to be created afterwards, and the sanitized test plan. The authoritative require
 | Workflow identity (`job_workflow_ref` this repo's workflow `@refs/heads/main`) | Enforced by the inspection script |
 | Token validity (numeric `iat`/`exp`, ≤ 3660 s lifetime, not expired/backdated) | Enforced by the inspection script |
 | Immutable subject, production-plan | **PASS** — protected inspection run 40453021102 (workflow_dispatch on `main` at `1e06e7f`): exact subject `repo:eswrops@237514587/EventForge@1434990962:environment:production-plan` with all numeric claims and live REST drift check |
-| Immutable subject, production | Re-verified by the inspection workflow's dedicated `inspect (production)` job (added 2026-10-27, PR #31); result recorded in the gate table of [README.md](README.md) — **do not configure the apply-side trust until this run reports `Result: PASS`** |
+| Immutable subject, production | **PASS** — the inspection workflow's dedicated `inspect (production)` job (added 2026-10-27, PR #31), run 40510989821 (workflow_dispatch on `main` at `a03bf1d`, 2026-10-27T13:19Z): exact subject `repo:eswrops@237514587/EventForge@1434990962:environment:production`, numeric `repository_id` 1434990962 and `repository_owner_id` 237514587, `ref`/`ref_type` branch@main, `job_workflow_ref` this repository's workflow at `refs/heads/main`, sane 300 s validity window, live REST drift check OK — `Result: PASS (all expected OIDC claims matched exactly)` |
 
 The inspection workflow now runs one independent job per protected environment
 (`inspect (production-plan)`, `inspect (production)`), each pinned to its environment with a
-distinct concurrency group; both must report `Result: PASS` before any trust is created.
+distinct concurrency group; both report `Result: PASS` (production-plan: run 40453021102;
+production: run 40510989821). Both jobs were re-verified in run 40510989821 after the workflow
+extension. No trust may be created if a later inspection drifts.
 
 ## 2. Two independent identity-domain token-exchange clients (to create ONLY after approval)
 
