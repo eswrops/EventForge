@@ -48,11 +48,14 @@ if [[ -f "$root/terraform.tfstate" || -f "$root/terraform.tfstate.backup" ]]; th
 fi
 m1_check PASS "local-state" "no pre-existing local iam state"
 
-# State-key ownership: the key must not exist, and no live lock may sit under iam/.
-if m1_object_exists "$M1_IAM_KEY"; then
-  fail_gate iam-key "$M1_IAM_KEY already exists — the iam/ state key has an owner; STOP and reconcile its ownership manually (no migration, no override)"
+# State-key ownership: absence must be PROVEN (fail closed against
+# authorization/service errors, historical versions, delete markers), and no
+# live lock may sit under iam/.
+if m1_prove_state_key_absent "$M1_IAM_KEY"; then
+  m1_check PASS "iam-key" "$M1_IAM_KEY absence proven — unowned, fresh root"
+else
+  fail_gate iam-key "$M1_IAM_KEY absence could not be proven — the key exists, has history, or the listing failed (details above); STOP and reconcile"
 fi
-m1_check PASS "iam-key" "$M1_IAM_KEY absent — unowned, fresh root"
 m1_verify_no_lock_objects "iam/" \
   && m1_check PASS "no-locks" "no live lock objects under iam/" \
   || fail_gate no-locks "stale or live lock objects under iam/"
@@ -76,11 +79,11 @@ fi
 m1_verify_workspace_default "$M1_TERRAFORM_BIN" "$root" \
   && m1_check PASS "workspace-default" "workspace is default" \
   || fail_gate workspace-default "non-default workspace"
-if m1_object_exists "$M1_IAM_KEY"; then
-  m1_check FAIL "init-wrote-nothing" "init unexpectedly created $M1_IAM_KEY"
-  m1_exit_gate_failed
+if m1_prove_state_key_absent "$M1_IAM_KEY"; then
+  m1_check PASS "init-wrote-nothing" "no remote state object written by init (absence re-proven)"
 else
-  m1_check PASS "init-wrote-nothing" "no remote state object written by init"
+  m1_check FAIL "init-wrote-nothing" "init unexpectedly created state or history under $M1_IAM_KEY"
+  m1_exit_gate_failed
 fi
 
 count="$("$M1_TERRAFORM_BIN" -chdir="$root" state list 2>/dev/null | grep -c . || true)"

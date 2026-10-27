@@ -59,12 +59,14 @@ m1_verify_no_lock_objects "iam/" \
   && m1_check PASS "no-locks" "no remote lock objects" \
   || fail_gate no-locks "stale or live lock objects under iam/"
 
-# Expected initial state: the key must still be absent. A state object here
-# means the root's ownership changed since the reviewed baseline — STOP.
-if m1_object_exists "$M1_IAM_KEY"; then
-  fail_gate iam-key "$M1_IAM_KEY exists but the reviewed baseline expects NO iam state — reconcile ownership before planning"
+# Expected initial state: absence must still be PROVEN. A state object,
+# historical version, or delete marker here means the root's ownership changed
+# since the reviewed baseline — STOP.
+if m1_prove_state_key_absent "$M1_IAM_KEY"; then
+  m1_check PASS "iam-key" "$M1_IAM_KEY absence proven — matches the expected initial state"
+else
+  fail_gate iam-key "$M1_IAM_KEY absence could not be proven (details above) — reconcile ownership before planning"
 fi
-m1_check PASS "iam-key" "$M1_IAM_KEY absent — matches the expected initial state"
 
 # Operator OCIDs (git-ignored, reviewed per root) for the contract rendering.
 [[ -f "$tfvars" ]] || fail_gate operator-vars "$tfvars missing — operator workstation inputs are required"

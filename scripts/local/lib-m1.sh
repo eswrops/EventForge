@@ -135,6 +135,38 @@ m1_object_exists() { # m1_object_exists <key> → 0 if object present
   oci os object head --bucket-name "$M1_TF_STATE_BUCKET" --name "$1" "${M1_OCI_REGION_ARGS[@]}" >/dev/null 2>&1
 }
 
+# PROVE a state key has never existed. Unlike m1_object_exists (an existence
+# probe that cannot distinguish "absent" from "authorization denied"), this
+# proof fails closed: an authorization failure, service error, unparseable
+# listing, ANY historical object version, or ANY delete marker for the exact
+# key is a hard failure — never silently treated as absence. Used wherever a
+# guard's safety depends on the key being virgin territory.
+m1_prove_state_key_absent() { # m1_prove_state_key_absent <state-key>
+  local key="$1" versions_json entries
+  versions_json="$(oci os object list-object-versions --bucket-name "$M1_TF_STATE_BUCKET" \
+    --prefix "$key" --all "${M1_OCI_REGION_ARGS[@]}" 2>/dev/null)" || {
+    echo "Cannot list object versions under $key — an authorization or service failure is never treated as absence." >&2
+    return 1
+  }
+  if ! jq -e '.data | type == "array"' <<<"$versions_json" >/dev/null 2>&1; then
+    echo "Unparseable object-version listing for $key — refusing to treat it as absence." >&2
+    return 1
+  fi
+  entries="$(jq -r --arg key "$key" '[.data[] | select(.name == $key)] | length' <<<"$versions_json")" || {
+    echo "Could not evaluate object-version listing for $key." >&2
+    return 1
+  }
+  if [[ "$entries" != "0" ]]; then
+    jq -r --arg key "$key" \
+      '.data[] | select(.name == $key) |
+       "  \(.name) version=\(.["version-id"]) delete-marker=\(.["is-delete-marker"]) created=\(.["time-created"] // "-")"' \
+      <<<"$versions_json" >&2
+    echo "Historical versions or delete markers exist for $key — STOP and reconcile ownership before proceeding." >&2
+    return 1
+  fi
+  return 0
+}
+
 m1_verify_no_lock_objects() { # m1_verify_no_lock_objects <key-prefix>
   local prefix="$1" locks
   locks="$(oci os object list --bucket-name "$M1_TF_STATE_BUCKET" --prefix "$prefix" --all "${M1_OCI_REGION_ARGS[@]}" 2>/dev/null \

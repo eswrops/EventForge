@@ -11,6 +11,31 @@
 > (this record is the apply's approval record; every binding below is
 > machine-verified before any live access).
 
+## Statement-2 effective scope — operator acknowledgment REQUIRED (blocker)
+
+> Verified against Oracle's policy-inheritance documentation
+> ([Identity/Concepts/policies.htm](https://docs.oracle.com/en-us/iaas/Content/Identity/Concepts/policies.htm),
+> 2026-10-28; see [../b5-mysql-nsg-diagnosis.md](../b5-mysql-nsg-diagnosis.md)
+> §8): a location clause naming a compartment covers that compartment AND all
+> descendants, so `eventforge-mysql-vnic-update` — attached at the tenancy
+> with `in compartment id <tenancy-OCID>` — is **effectively TENANCY-WIDE**,
+> not root-only. No documented policy-language form scopes a grant to the
+> root compartment only. The where-clause (mysqldbsystem principals of DB
+> systems in Test; exactly one DB system) is the binding limit. Practical
+> delta: the MySQL service principal could in principle associate/disassociate
+> NSG memberships on the Test-compartment VNICs (two API VMs, load balancer).
+
+Execution is REFUSED until the operator records one of:
+
+- `<ACKNOWLEDGED>` — I have read the scope analysis above and ACCEPT the
+  tenancy-wide effective scope of `eventforge-mysql-vnic-update` as the
+  Oracle-documented mandatory minimum for MySQL NSG updates. OR
+- `<ORACLE-FIRST>` — do not execute; obtain Oracle confirmation of a
+  genuinely narrower documented form (e.g., a reliable
+  `target.compartment.id` condition) and return with a NEW reviewed package. OR
+- `<DECLINED>` — do not execute; B5 stays blocked on the db security-list
+  control.
+
 ## Grant
 
 - Approved by: `<operator name>` (must equal the `M1_IAM_APPLY_APPROVED_BY`
@@ -51,9 +76,8 @@
 - Plan shows any resource besides the two policies, any change/destroy, or any
   statement differing from the reviewed text → STOP.
 - Policy-create API error (e.g., syntax rejection of
-  `in compartment id <tenancy-ocid>`) → STOP; do not fall back to
-  `in tenancy` or any broader location without a new approval
-  (../b5-mysql-nsg-diagnosis.md §8).
+  `in compartment id <tenancy-ocid>`) → STOP; no fallback location without a
+  new approval (../b5-mysql-nsg-diagnosis.md §8).
 - Anything else unexpected → STOP, preserve logs.
 
 ## Explicitly not authorized by this approval
