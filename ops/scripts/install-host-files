@@ -15,11 +15,15 @@ install -m 0644 "${repo_root}/ops/systemd/eventforge-api.service" /etc/systemd/s
 install -m 0644 "${repo_root}/ops/systemd/eventforge-worker.service" /etc/systemd/system/eventforge-worker.service
 install -m 0644 "${repo_root}/ops/systemd/eventforge-backup.service" /etc/systemd/system/eventforge-backup.service
 install -m 0644 "${repo_root}/ops/systemd/eventforge-backup.timer" /etc/systemd/system/eventforge-backup.timer
+install -d -o root -g root -m 0755 /etc/systemd/journald.conf.d
+install -m 0644 "${repo_root}/ops/systemd/30-eventforge-journald.conf" /etc/systemd/journald.conf.d/30-eventforge-journald.conf
 install -m 0750 "${repo_root}/ops/scripts/eventforge-backup" /usr/local/lib/eventforge/eventforge-backup
 install -m 0750 "${repo_root}/ops/scripts/eventforge-install-release" /usr/local/lib/eventforge/eventforge-install-release
 ln -sfn /usr/local/lib/eventforge/eventforge-install-release /usr/local/sbin/eventforge-install-release
 
 systemctl daemon-reload
 systemctl enable eventforge-api.service eventforge-worker.service eventforge-backup.timer
-echo "Create /etc/eventforge/{api,worker,backup,release}.env and password files before starting services."
+echo "Create /etc/eventforge/{api,worker,backup,release}.env and password files before starting"
+echo "services: owner root, group eventforge, mode 0640 (they are read by the services and"
+echo "carry credentials); never world-readable."
 
