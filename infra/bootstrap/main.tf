@@ -71,7 +71,7 @@ resource "oci_identity_dynamic_group" "eventforge_instances" {
   compartment_id = var.tenancy_ocid
   name           = "eventforge-instances"
   description    = "Only the two EventForge application instances."
-  matching_rule  = "Any {${join(", ", [for id in var.instance_ocids : "instance.id = '${id}'"])}"
+  matching_rule  = "Any {${join(", ", [for id in var.instance_ocids : "instance.id = '${id}'"])}}"
 }
 
 resource "oci_identity_policy" "eventforge_instance_backups" {

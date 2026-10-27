@@ -62,6 +62,10 @@ assert_contains "$main_tf" 'kms_key_id     = var.state_bucket_kms_key_id' \
   "state bucket CMK attachment"
 assert_contains "$main_tf" 'depends_on = \[oci_identity_policy.objectstorage_kms\]' \
   "state bucket waits for the Object Storage KMS policy"
+assert_contains "$main_tf" 'matching_rule  = "Any {\${join' \
+  "dynamic-group matching rule begins with an OCI Any expression"
+assert_contains "$main_tf" '\])}}"' \
+  "dynamic-group matching rule closes both the Terraform interpolation and OCI expression"
 assert_contains "$main_tf" 'access_type    = "NoPublicAccess"' \
   "NoPublicAccess buckets"
 
