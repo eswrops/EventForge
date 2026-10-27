@@ -11,7 +11,7 @@
 > (this record is the apply's approval record; every binding below is
 > machine-verified before any live access).
 
-## Statement-2 effective scope — operator acknowledgment REQUIRED (blocker)
+## Statement-2 effective scope — SCOPE_DECISION machine-validated (blocker)
 
 > Verified against Oracle's policy-inheritance documentation
 > ([Identity/Concepts/policies.htm](https://docs.oracle.com/en-us/iaas/Content/Identity/Concepts/policies.htm),
@@ -25,16 +25,31 @@
 > delta: the MySQL service principal could in principle associate/disassociate
 > NSG memberships on the Test-compartment VNICs (two API VMs, load balancer).
 
-Execution is REFUSED until the operator records one of:
+**Execution is REFUSED unless this record carries EXACTLY ONE standalone
+line, at top level, spelled character-for-character:**
 
-- `<ACKNOWLEDGED>` — I have read the scope analysis above and ACCEPT the
-  tenancy-wide effective scope of `eventforge-mysql-vnic-update` as the
-  Oracle-documented mandatory minimum for MySQL NSG updates. OR
-- `<ORACLE-FIRST>` — do not execute; obtain Oracle confirmation of a
-  genuinely narrower documented form (e.g., a reliable
-  `target.compartment.id` condition) and return with a NEW reviewed package. OR
-- `<DECLINED>` — do not execute; B5 stays blocked on the db security-list
-  control.
+```
+SCOPE_DECISION: ACCEPT_TENANCY_WIDE_VNIC
+```
+
+`scripts/local/m1-iam-apply.sh` validates this mechanically in its offline
+section, before any live access, and refuses: a missing line, a placeholder,
+`ORACLE_FIRST`, `DECLINED`, multiple or conflicting decisions, a decision
+quoted inside this commentary, or trailing text on the line. Nothing else
+(commentary, environment variables, a passing policy check) can grant this
+acceptance.
+
+Recording that line asserts: *I have read the scope analysis above and ACCEPT
+the tenancy-wide effective scope of `eventforge-mysql-vnic-update` as the
+Oracle-documented mandatory minimum for MySQL NSG updates.* Declining is a
+valid operator decision — record it OUTSIDE this record (B5 then stays
+blocked on the db security-list control, and no execution is attempted).
+Seeking Oracle confirmation of a genuinely narrower documented form (e.g., a
+reliable `target.compartment.id` condition) likewise means NOT executing this
+package; it would require a NEW reviewed package, not a modified record. The
+`target.compartment.id` investigation and the prepared Oracle support
+question are in §9 of the diagnosis, and the full A/B/C comparison (blast
+radius, operational consequences, reversibility) is in §10.
 
 ## Grant
 

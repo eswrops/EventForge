@@ -266,3 +266,125 @@ acknowledgment block is unfilled and execution remains REFUSED. The
 former stop condition about a create-time syntax rejection of
 `in compartment id <tenancy-OCID>` is retained (any service-side rejection →
 STOP, preserve logs, no fallback without a new approval).
+
+## 9. `target.compartment.id` applicability investigation (2026-10-28)
+
+**Question.** Can `target.compartment.id` reliably constrain the four VNIC
+permissions in statement 2 (`VNIC_CREATE`, `VNIC_UPDATE`,
+`VNIC_ASSOCIATE_NETWORK_SECURITY_GROUP`,
+`VNIC_DISASSOCIATE_NETWORK_SECURITY_GROUP`) to the root compartment for
+service-initiated operations by `mysqldbsystem` principals — enabling a
+genuinely narrower where-clause than the accepted tenancy-wide scope?
+
+**Documented facts** (all retrieved verbatim 2026-10-28):
+
+1. **Definition** — Policy Reference, "General Variables for All Requests"
+   ([Identity/Reference/policyreference.htm](https://docs.oracle.com/en-us/iaas/Content/Identity/Reference/policyreference.htm)):
+   `target.compartment.id` (Entity/OCID) is "The OCID of the compartment
+   containing the primary resource", with a note that it cannot be used with
+   List operations to filter by the requesting user's compartment access.
+2. **Undefined-variable semantics** — Advanced Policy Features
+   ([Identity/Concepts/policyadvancedfeatures.htm](https://docs.oracle.com/en-us/iaas/Content/Identity/Concepts/policyadvancedfeatures.htm),
+   "Variables that Aren't Applicable to a Request Result in a Declined
+   Request"): "If the variable is not applicable to the incoming request, the
+   condition evaluates to false and the request is declined." Adding a
+   `target.compartment.id` condition can therefore only ever NARROW or BREAK
+   a grant — never broaden it.
+3. **MySQL's own mandatory-policy documentation** — Resource Principals
+   ([mysql-database/doc/resource-principals.html](https://docs.oracle.com/en-us/iaas/mysql-database/doc/resource-principals.html),
+   "Defining a Policy for Network Security Groups", current © 2026 page)
+   documents the any-user form verbatim with ONLY
+   `request.principal.type='mysqldbsystem'` and
+   `request.resource.compartment.id='<DB-system compartment>'` conditions.
+   `target.compartment.id` appears NOWHERE in the MySQL Database policy
+   documentation.
+4. **Core Services details** — the
+   [Details for the Core Services](https://docs.oracle.com/en-us/iaas/Content/Identity/Reference/corepolicyreference.htm)
+   `vnics` verb/permission table confirms the four permissions map to the
+   VNIC APIs, but the Core Services "Supported Variables" section lists only
+   `target.boot-volume.kms-key.id` and `target.image.id` as service-specific
+   target variables and says nothing about variable population for
+   service-initiated (resource-principal) request flows.
+
+**Per-operation assessment.** For user-initiated API calls the definition
+above implies `target.compartment.id` would hold the compartment of the VNIC
+(primary resource). For the mysqldbsystem service-initiated flow, NO Oracle
+documentation states whether the variable is populated at all, and the
+"primary resource" is ambiguous for the cross-resource pair:
+
+| Permission | Primary resource if populated | Documented for mysqldbsystem service-initiated flow? |
+| --- | --- | --- |
+| `VNIC_CREATE` | the new VNIC (subnet's compartment = root) | No |
+| `VNIC_UPDATE` | the endpoint VNIC (root) | No |
+| `VNIC_ASSOCIATE_NETWORK_SECURITY_GROUP` | ambiguous — VNIC (root) vs NSG (Test) | No |
+| `VNIC_DISASSOCIATE_NETWORK_SECURITY_GROUP` | ambiguous — same pair | No |
+
+**Determination: NOT USABLE on documentation alone.** Outcome matrix if
+`target.compartment.id='<root-OCID>'` were added to statement 2: (a) populated
+with the VNIC compartment → grant genuinely narrows to root (desired
+semantics); (b) not populated → condition evaluates false → EVERY VNIC
+operation declined → the retest fails with the identical `AuthorizationFailed`
+symptom, wasting the single retest attempt (fail-closed, no security
+regression, but operational breakage); (c) populated with the NSG compartment
+for the associate/disassociate pair → condition denies (root ≠ Test). The
+variable does not have a confirmed, identical meaning across the four verbs
+in this flow. A live test would require creating a production-shaped IAM
+policy, which is not authorized.
+
+**Draft Oracle support question** (prepared, NOT filed; no test policy to be
+created):
+
+> **Subject:** Is `target.compartment.id` populated for service-initiated VNIC
+> operations by `mysqldbsystem` resource principals (DB-system NSG update flow)?
+>
+> **Context:** Tenancy `<tenancy-OCID>`, region ap-hyderabad-1. A MySQL DB
+> system lives in compartment "Test"; its subnet and endpoint VNIC live in the
+> tenancy root compartment. Updating the DB system's network security groups
+> requires resource-principal permissions per
+> [Resource Principals (MySQL Database)](https://docs.oracle.com/en-us/iaas/mysql-database/doc/resource-principals.html),
+> "Defining a Policy for Network Security Groups".
+>
+> 1. For each of `VNIC_CREATE`, `VNIC_UPDATE`,
+>    `VNIC_ASSOCIATE_NETWORK_SECURITY_GROUP`,
+>    `VNIC_DISASSOCIATE_NETWORK_SECURITY_GROUP`, as exercised by the
+>    DB-system NSG update work request (service-initiated by the
+>    `mysqldbsystem` resource principal): is the policy condition variable
+>    `target.compartment.id` populated, and if so, with the compartment of
+>    which resource (the VNIC, the NSG, or the DB system)?
+> 2. Which resource is the "primary resource" for
+>    `VNIC_ASSOCIATE_NETWORK_SECURITY_GROUP` /
+>    `VNIC_DISASSOCIATE_NETWORK_SECURITY_GROUP` in this flow — the VNIC or
+>    the NSG?
+> 3. If `target.compartment.id` is not populated for any of these
+>    service-initiated operations, please confirm that a where-clause using
+>    it declines the operation, per "Variables that Aren't Applicable to a
+>    Request Result in a Declined Request" (Advanced Policy Features).
+> 4. Does Oracle document or support any policy-language form that scopes
+>    these VNIC permissions to the ROOT compartment only for `mysqldbsystem`
+>    principals, given that a location clause naming a compartment also
+>    covers all descendant compartments via policy inheritance?
+>
+> If confirmed populated and stable for all four permissions, we intend to
+> add `target.compartment.id = '<root-compartment-OCID>'` to the where-clause
+> of our VNIC statement as a NEW reviewed change. We will not create test
+> policies pending your answer.
+
+## 10. Security-scope options A/B/C (2026-10-28, decision aid for MYSQL-NSG-IAM)
+
+| | **OPTION A — execute reviewed policies** (tenancy-wide effective scope, explicitly accepted) | **OPTION B — root-target-restricted policy** (only if §9 semantics are confirmed) | **OPTION C — no additional IAM policy** |
+| --- | --- | --- | --- |
+| Content | The two reviewed policies of §5, exactly as Oracle's Resource Principals doc prescribes | Statement 2 + `target.compartment.id='<root-OCID>'` in the where-clause — a NEW reviewed package | Nothing; B5 stays blocked |
+| Blast radius | Four narrow VNIC verbs + one NSG-membership verb, tenancy-wide by inheritance, for principals satisfying the where-clause (mysqldbsystem principals of Test DB systems — this tenancy has exactly one). Practical delta beyond root: the same principal could in principle associate/disassociate NSGs on the two Test API-VM VNICs and the LB VNICs | Strictly smaller: VNIC verbs only on root-compartment VNICs — IF the variable is populated for all four service-initiated verbs (unconfirmed, §9) | Zero new IAM grants |
+| Operational consequences | Matches the Oracle-documented mandatory minimum verbatim → highest probability the single retest attempt succeeds; no dependence on undocumented variable behavior | If the variable is unpopulated or ambiguous (§9 matrix), the retest fails with the identical `AuthorizationFailed` symptom — one retest attempt burned, diagnosis cost, support burden on an undocumented combination | MySQL NSG segmentation remains unavailable; the db security list's subnet-wide 3306 rule stays the governing (weaker, subnet-wide) control; B5 unresolved and gating |
+| Reversibility | Policies carry `prevent_destroy`; narrowing later (e.g., after an Oracle answer enables Option B) is a separately reviewed statement update | Same mechanism | Nothing to reverse, but the control gap remains open indefinitely |
+| Status | READY — requires the machine-enforced `SCOPE_DECISION: ACCEPT_TENANCY_WIDE_VNIC` line in the approval record | NOT AVAILABLE — documentation inconclusive (§9); would need Oracle confirmation + new review | Status quo |
+
+**Recommendation.** Option A is the least-privilege policy that is actually
+EXECUTABLE today: it is the Oracle-documented mandatory minimum, doubly
+constrained by the where-clause, and its tenancy-wide effective scope is now
+an explicit, machine-validated operator acceptance rather than an implicit
+side effect. Option B would be strictly narrower but is unverifiable without
+an Oracle answer and risks burning the one retest attempt on an undocumented
+condition. Option C is the most conservative in IAM terms but leaves the
+intended NSG-based 3306 control unrealized and the db security list's
+subnet-wide rule in force.
