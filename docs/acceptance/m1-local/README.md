@@ -28,6 +28,7 @@ and is not rewritten by this track.
 | [imports.md](imports.md) | Phase 2 inventory + Phase 3 import execution record |
 | [platform-plan.md](platform-plan.md) | Phase 4 saved-plan record and safe-plan policy result |
 | [security.md](security.md) | Post-apply network security verification |
+| [next-ingress-security-approval.md](next-ingress-security-approval.md) | Prepared change package for the future ingress gate: effective rule union, legacy-rule findings, scope-A/scope-B separation, sequencing, rollback, expected plan actions |
 | [cost.md](cost.md) | Quota / Always-Free / budget findings |
 | [blockers.md](blockers.md) | Blockers and deferred items |
 | [m1-local-report.json](m1-local-report.json) | Machine-readable gate summary |
@@ -74,3 +75,22 @@ mode 0700): `/Users/eswr/secure/evidence/m1local-20261027T154030Z/`.
 **M1-LOCAL overall: PASS as a local-infrastructure acceptance track up to its approval
 boundaries.** The original full-M1 gate remains BLOCKED where GitHub workload federation or its
 security acceptance is still required; historical acceptance records were not modified.
+
+## Final acceptance consistency re-verification (2026-10-28, close-out)
+
+All read-only. Main = `ae25230c` (contains PR #36 `e93bfc4` + PR #37, both merged with 4/4
+required checks green on their head commits: the three `Format and validate (infra/{bootstrap,platform,frontend})`
+contexts + `CI script and workflow checks`). Re-verified live this date:
+
+| Check | Result |
+| --- | --- |
+| Remote platform state | lineage `cdda242b-92c1-4371-5b43-495f3849fc4d`, serial **10** — unchanged |
+| `scripts/local/m1-verify.sh` | **18 PASS / 0 FAIL** (VMs RUNNING, MySQL ACTIVE, LB zero listeners, NSGs attached to nothing, alarms + budget present, drift clean) |
+| Clean-checkout platform plan | **no-op** — `changes=0`, safe-plan policy PASS, no remote locks, `enable_api_ingress` still refused |
+| Import declarations | 8/8 tracked in `imported_resources.tf` (8 `prevent_destroy`) |
+| Protected input files | `backend.hcl`, `terraform.auto.tfvars`, `imported.auto.tfvars`, `terraform.tfvars` all still git-ignored (`git check-ignore` verified) |
+| ONS subscription | still **PENDING** (`eswr.ops@gmail.com`, topic `eventforge-operations` ACTIVE) — operator confirmation action recorded in [blockers.md](blockers.md) B3 |
+| Next-gate package | [next-ingress-security-approval.md](next-ingress-security-approval.md) prepared (no changes applied) |
+
+Statuses retained: **OCI-FEDERATION = DEFERRED, STAGE-2-IAM = NOT_APPLIED,
+IAM-DENIAL = NOT_RUN, ONS-DELIVERY = PENDING.** None were converted to PASS.

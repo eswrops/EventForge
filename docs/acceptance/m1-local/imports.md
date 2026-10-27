@@ -1,7 +1,9 @@
 # M1-LOCAL imports — inventory, generated configuration, execution record
 
-Status: **Phase 2 PREPARED (2026-10-27) — Phase 3 execution STOPPED at the OCI-IMPORT
-approval gate.** Nothing has been imported; `platform/terraform.tfstate` does not exist.
+Status: **Phase 3 EXECUTED 2026-10-27 — OCI-IMPORTS = PASS (8/8 imported, see §6).**
+(The header previously said "Phase 2 PREPARED — nothing imported"; that was a stale line
+left over from before execution and was corrected 2026-10-28 — §6 below is the
+authoritative execution record.)
 
 ## 1. Live inventory reconciliation (read-only, 2026-10-27)
 
