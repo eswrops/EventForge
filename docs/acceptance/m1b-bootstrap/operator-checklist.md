@@ -46,7 +46,49 @@ throughout; `enable_api_ingress` remains false in every tfvars and plan.**
 7. **Review and approve the OCI Vault/key decision.** — Create the dedicated state CMK (or record
    reuse of `rust-api-secret-key`) per [oci-bootstrap.md](oci-bootstrap.md) §2; note the
    `kms_key_compartment_ocid`. Rollback: disable the key version (nothing depends on it yet).
-   Approval: [ ] date: ______ reviewer: ______
+   Approval: [x] 2026-10-27 — EXECUTED; recorded post-hoc from operator session evidence (solo
+   maintainer; no separate written reviewer sign-off exists). Dedicated AES-256 SOFTWARE key
+   created in vault `rust-api-secrets` (root compartment, `kms_key_compartment_ocid` = tenancy
+   OCID) and transcribed into the gitignored `infra/bootstrap/terraform.auto.tfvars`
+   (`state_bucket_kms_key_id`); decision captured in the gate table refresh (PR #21, `8907c78`).
+   Live re-verification 2026-10-27: bucket `eventforge-tfstate-prod` reports this exact key as
+   `kms-key-id`. Post-hoc note: the bucket now depends on the key, so the original "disable the
+   key version" rollback no longer applies.
+
+8. **Generate and review the real bootstrap plan.** — Prepare
+   `infra/bootstrap/terraform.auto.tfvars` (incl. `kms_key_compartment_ocid` and the federation
+   statements from [federation.md](federation.md) §C); then
+   `cd infra/bootstrap && terraform plan -input=false -refresh=false -out=/secure/plan-review.tfplan`.
+   Expected for the **Stage 1** apply (`enable_workload_policies = false`, the default): exactly
+   **8 creates**, 0 changes, 0 destroys — any destroy/replacement is a STOP. The two GitHub
+   workload policies are Stage 2 (2 creates after flipping the flag) and may only be applied once
+   the first live token exchange has verified the principal claim mapping. Read-only against OCI
+   except state-free planning. Approval: [x] 2026-10-27 — EXECUTED; recorded post-hoc from
+   operator session evidence (solo maintainer; no separate written reviewer sign-off exists).
+   The real Stage-1 plan was produced from the completed tfvars (incl. `kms_key_compartment_ocid`
+   = tenancy OCID and the federation statement sets from [federation.md](federation.md) §C) and
+   reported exactly 8 creates / 0 changes / 0 destroys; outcome recorded in the gate table
+   refresh (PR #21, `8907c78`). The plan file itself lived outside the repository and has not
+   been retained; the applied outcome is independently proven live by the 8-resource remote
+   state (lineage `a79177dd-2c02-084e-ddf6-29f346b2fa78`, serial 1).
+
+9. **Obtain separate bootstrap apply approval.** — This is the first `terraform apply` of the
+   project; it needs its own explicit approval, not the plan-review one.
+   `terraform apply /secure/plan-review.tfplan` → the 10 resources of
+   [oci-bootstrap.md](oci-bootstrap.md) §1; nothing else. Post-steps: confirm the notification
+   email; backend migration per [state-recovery.md](state-recovery.md) §1; immediate state backup
+   (§2); then re-run the preflight in `--mode post-bootstrap` (buckets expected; versioning + CMK
+   validated live). Rollback: §8 of state-recovery.md.
+   Approval: [x] 2026-10-27 — EXECUTED; recorded post-hoc from operator session evidence (solo
+   maintainer; no separate written reviewer sign-off exists). The **Stage 1** apply (8 creates;
+   the two workload policies gated off) ran and was verified live; the backend migration to
+   `bootstrap/terraform.tfstate` was accepted (lineage `a79177dd-2c02-084e-ddf6-29f346b2fa78`,
+   serial 1, lineage/serial-reset root cause in
+   [../m1-final/remote-state.md](../m1-final/remote-state.md)). Live re-verification 2026-10-27:
+   all 8 addresses in remote state, buckets private/versioned/CMK-bound, no active lock object.
+   **Outstanding post-step:** the ONS email subscription (`eswr.ops@gmail.com`, created
+   2026-10-27T06:07Z) is still `PENDING` — the operator must click the confirmation email;
+   notification delivery must not be marked PASS until confirmed.
 
 8. **Generate and review the real bootstrap plan.** — Prepare
    `infra/bootstrap/terraform.auto.tfvars` (incl. `kms_key_compartment_ocid` and the federation
