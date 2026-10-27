@@ -13,8 +13,19 @@
 #   - origin:  where request.resource.compartment.id = <Test compartment>
 #              (only DB systems living in the Test compartment qualify —
 #              this tenancy has exactly one, rust-api-heatwave)
-#   - target:  scoped to the exact compartment owning the target resource
+#   - target:  scoped to the compartment owning the target resource
 #              (NSGs in Test; VNICs in the tenancy root).
+#              NOTE on effective scope (verified against Oracle's policy
+#              inheritance documentation, 2026-10-28): a location clause
+#              naming a compartment covers that compartment AND all its
+#              descendants. Statement 1 (Test) therefore covers NSGs in Test
+#              and any future Test children; statement 2 (root) is EFFECTIVELY
+#              TENANCY-WIDE — there is no documented policy-language form that
+#              scopes a grant to the root compartment only. The where-clause
+#              constraints above are the binding limits: only mysqldbsystem
+#              principals of Test-compartment DB systems can use either grant.
+#              See b5-mysql-nsg-diagnosis.md §8; MYSQL-NSG-IAM approval is
+#              BLOCKED until the operator explicitly acknowledges this scope.
 #
 # Deliberately NOT granted: manage all-resources, tenancy-wide network
 # administration, IAM administration, access to other DB systems or Object
@@ -47,8 +58,11 @@ resource "oci_identity_policy" "mysql_nsg_membership" {
 # Statement 2 of 2 — subnet compartment (tenancy root): let the DB-system
 # resource principal update its own endpoint VNIC to associate/disassociate
 # NSGs. Attached at the tenancy because the MySQL subnet (rust-api-db-private-
-# subnet) and its VNIC live in the root compartment; the statement itself is
-# scoped to root-compartment resources only.
+# subnet) and its VNIC live in the root compartment; a child-attached policy
+# cannot grant access to parent-compartment resources. Via policy inheritance
+# the location clause effectively covers root + ALL descendant compartments
+# (no root-only form exists in the documented policy language) — the
+# where-clause, not the location, is what limits the principals.
 resource "oci_identity_policy" "mysql_vnic_update" {
   provider = oci
 

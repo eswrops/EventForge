@@ -40,6 +40,8 @@ for fixture in \
   plan-iam-wrong-name.json \
   plan-iam-extra-resource.json \
   plan-iam-update-instead.json \
+  plan-iam-broadened-tenancy.json \
+  plan-iam-dropped-where.json \
   plan-malformed.json \
   plan-missing-resource-changes.json; do
   if "$checker" --policy "$contract" "${vars[@]}" "$fixtures/$fixture" >/dev/null 2>&1; then
@@ -47,6 +49,16 @@ for fixture in \
     exit 1
   fi
 done
+
+# The contract must pin the exact reviewed location form: a plan whose
+# statement 2 uses the broader `in tenancy` keyword (b5-mysql-nsg-diagnosis.md
+# §8) is refused — future contract edits cannot silently broaden the grant.
+grep -qF "in compartment id \${tenancy_ocid}" "$contract" \
+  || { echo "Contract must retain 'in compartment id \${tenancy_ocid}'." >&2; exit 1; }
+if grep -qF "in tenancy where" "$contract"; then
+  echo "Contract must not use the broader 'in tenancy' location." >&2
+  exit 1
+fi
 
 # Wrong OCIDs must be refused (they render a different reviewed contract).
 if "$checker" --policy "$contract" \

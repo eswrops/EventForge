@@ -172,6 +172,17 @@ profile `DEFAULT`, exact backend coordinates, default workspace, locking
 retained, no migration/recovery/auto-approve/retry, evidence outside the
 repository) with the exact two-policy contract checker
 `scripts/ci/assert-iam-plan.sh` + `scripts/ci/iam-plan-contract.json`.
+State-key absence is PROVEN fail-closed (`m1_prove_state_key_absent`):
+authorization failures, service errors, unparseable listings, historical
+object versions, and delete markers for `iam/terraform.tfstate` all STOP the
+guard — absence is never inferred from an error. The apply additionally
+re-renders the SHA-bound saved plan and re-runs the contract checker on it
+immediately before execution (`offline-contract-recheck`). Reconciliation of
+the state key (read-only, 2026-10-28): no `iam/terraform.tfstate` object or
+version has ever existed; the only `iam/` history is four DELETED
+`iam/terraform.tfstate.lock` versions (two clean acquire/release cycles,
+2026-10-27T20:27Z, from the earlier plan-generation session) — benign
+Terraform locking residue, no live lock, ownership unambiguous.
 
 - **The `AuthorizationFailed` error code strongly supports the
   missing-permission diagnosis**: the accepting `UpdateDbSystem` API calls
@@ -198,28 +209,60 @@ repository) with the exact two-policy contract checker
   STOP and re-approve; the one retest attempt is not to be spent on a
   possibly-unpropagated grant.
 
-## 8. Tenancy-root policy location — question and determination
+## 8. Tenancy-root policy location — question and final determination (2026-10-28, corrected post-#42)
 
-**Question.** Statement 2 attaches at the tenancy root using
-`in compartment id <tenancy-OCID>`. Oracle's policy-syntax documentation
-(Identity/Concepts/policysyntax.htm) defines the location grammar as
-`[ tenancy | compartment <name> | compartment id <ocid> ]` but never states
-whether the `compartment id` form accepts the tenancy OCID (the root
-compartment's OCID equals the tenancy OCID, but no Oracle policy-syntax page
-visited on 2026-10-28 confirms the `compartment id` form accepts it; the
-documented root-scoped form is the `in tenancy` keyword, which would broaden
-scope to all child compartments).
+**Question.** Statement 2 attaches at the tenancy using
+`in compartment id <tenancy-OCID>`. Is that grant scoped to the ROOT
+compartment only?
 
-**Determination.** The `compartment id` form is kept UNCHANGED — it is the
-narrowest reading of Oracle's documented MySQL statements (`in compartment
-<subnet_compartment_name>` with the subnet compartment = root), keeps the
-grant pinned to exactly one compartment by unambiguous OCID, and is
-standard OCI behavior in practice (the root compartment's OCID is the
-tenancy OCID). **Broadening to `in tenancy` is explicitly NOT authorized
-without a new approval.** Residual risk, recorded: if the policy-create API
-rejects `in compartment id <tenancy-OCID>` at execution time, the MYSQL-NSG-IAM
-stop conditions apply (STOP, preserve logs, no fallback location), and the
-fallback (`in tenancy` + the same `where all {...}` constraints, or an
-explicitly documented alternative from Oracle support) requires a fresh
-reviewed plan and approval. This is an execution-time service-validation
-risk, not a reviewed-contract change.
+**Authoritative finding.** PR #42 initially judged the form the "narrowest
+reading" pinning the grant to exactly one compartment. **That was wrong.**
+Oracle's policy documentation
+([Identity/Concepts/policies.htm](https://docs.oracle.com/en-us/iaas/Content/Identity/Concepts/policies.htm),
+"Policy inheritance", retrieved verbatim 2026-10-28) states:
+
+> "Compartments inherit any policies from their parent compartment. …
+> Policies that apply to resources in CompartmentA also apply to resources in
+> CompartmentB and CompartmentC. So this policy:
+> `Allow group NetworkAdmins to manage virtual-network-family in compartment CompartmentA`
+> allows the group NetworkAdmins to manage VCNs in CompartmentA,
+> CompartmentB, and CompartmentC."
+
+A location clause naming a compartment therefore covers that compartment AND
+all its descendants. Every compartment in the tenancy descends from root, so
+`in compartment id <tenancy-OCID>` attached at the tenancy is **effectively
+tenancy-wide** — functionally equivalent in resource coverage to `in tenancy`.
+The documented policy language provides **no root-only form**.
+
+**Determination: root-only access CANNOT be established — the MYSQL-NSG-IAM
+approval blocker is RETAINED.** Effective scope of statement 2 if executed:
+`VNIC_CREATE, VNIC_UPDATE, VNIC_ASSOCIATE_NETWORK_SECURITY_GROUP,
+VNIC_DISASSOCIATE_NETWORK_SECURITY_GROUP` on VNICs in **all** compartments,
+for principals satisfying the where-clause (mysqldbsystem resource principals
+of DB systems in Test — this tenancy has exactly one, `rust-api-heatwave`).
+The practical delta versus a hypothetical root-only grant is the
+Test-compartment VNICs (the two API VM primary VNICs, the load balancer's
+VNICs): the MySQL service principal could in principle associate/disassociate
+their NSG memberships. The binding limits are the subject/origin where-clause
+constraints, not the location clause. The statements themselves remain the
+Oracle-documented mandatory minimum — they are NOT broadened deliberately;
+only the documentation of their effective scope is corrected here.
+
+**Outstanding operator decision (blocks MYSQL-NSG-IAM):**
+1. **Accept the tenancy-wide effective scope** of the Oracle-mandated
+   statement (recommended reading of the evidence: the where-clause admits
+   only the single Test DB-system principal; VNIC verbs are narrow; no
+   narrower documented form exists), acknowledge it in the approval record,
+   and execute. OR
+2. **Seek Oracle confirmation first** that `target.compartment.id` (or
+   another documented condition variable) reliably constrains VNIC targets
+   for mysqldbsystem principals, enabling a genuinely narrower where-clause —
+   this would be a NEW reviewed statement, not a variant of this package. OR
+3. Do not execute; B5 remains blocked (db security list 3306 stays the
+   governing control — effective posture unchanged and closed).
+
+Until the operator's written decision is recorded, the approval template's
+acknowledgment block is unfilled and execution remains REFUSED. The
+former stop condition about a create-time syntax rejection of
+`in compartment id <tenancy-OCID>` is retained (any service-side rejection →
+STOP, preserve logs, no fallback without a new approval).

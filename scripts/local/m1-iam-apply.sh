@@ -106,6 +106,31 @@ else
     "invalid or missing approval record ($approval_record): it must contain 'GATE: MYSQL-NSG-IAM', the plan SHA-256 $plan_sha, commit $commit, both resource addresses, both reviewed statements verbatim, '$M1_IAM_KEY absent', and an APPROVER: line"
 fi
 
+# Independent pre-execution revalidation: render the saved plan (.tfplan — the
+# exact SHA-bound artifact, not a companion JSON) back to JSON with the pinned
+# binary and run the IAM contract checker against it with the operator OCIDs.
+# This catches any saved plan whose content does not match the reviewed
+# two-policy contract immediately before execution, independently of the
+# plan-time metadata.
+m1_verify_terraform_bin \
+  && m1_check PASS "terraform-pinned-recheck" "v$M1_TERRAFORM_VERSION" \
+  || fail_gate terraform-pinned-recheck "wrong binary for plan revalidation"
+recheck_json="$M1_EVIDENCE_DIR/state/plan-recheck.json"
+"$M1_TERRAFORM_BIN" -chdir="$root" show -json "$plan_file" > "$recheck_json" \
+  2>"$M1_EVIDENCE_DIR/logs/plan-recheck-show.err" \
+  || fail_gate offline-contract-recheck "could not render the saved plan for revalidation — inspect $M1_EVIDENCE_DIR/logs/plan-recheck-show.err"
+chmod 600 "$recheck_json"
+if "$M1_REPO_ROOT/$M1_IAM_PLAN_CHECKER" \
+     --policy "$contract" \
+     --var "db_compartment_ocid=$db_ocid" \
+     --var "tenancy_ocid=$tenancy_ocid" \
+     "$recheck_json" >"$M1_EVIDENCE_DIR/logs/plan-recheck.log" 2>&1; then
+  m1_check PASS "offline-contract-recheck" "saved plan revalidated against the reviewed IAM contract"
+else
+  cat "$M1_EVIDENCE_DIR/logs/plan-recheck.log" >&2
+  fail_gate offline-contract-recheck "the saved plan does not match the reviewed two-policy IAM contract — REFUSING to execute"
+fi
+
 # Live guards -----------------------------------------------------------------
 m1_verify_terraform_bin \
   && m1_check PASS "terraform-pinned" "v$M1_TERRAFORM_VERSION" \
@@ -135,12 +160,14 @@ m1_verify_no_lock_objects "iam/" \
   && m1_check PASS "no-locks" "no remote lock objects" \
   || fail_gate no-locks "stale or live lock objects under iam/"
 
-# The state key must still be absent — the reviewed plan was built against an
-# empty root; an appearing state object is an ownership change, not a drift.
-if m1_object_exists "$M1_IAM_KEY"; then
-  fail_gate state-still-absent "$M1_IAM_KEY exists at apply time but the review expected it absent — STOP and reconcile ownership"
+# The state key must still be absent — proven, not assumed: the reviewed plan
+# was built against an empty root; an appearing object, historical version, or
+# delete marker is an ownership change, not a drift.
+if m1_prove_state_key_absent "$M1_IAM_KEY"; then
+  m1_check PASS "state-still-absent" "$M1_IAM_KEY absence proven"
+else
+  fail_gate state-still-absent "$M1_IAM_KEY absence could not be proven at apply time (details above) — STOP and reconcile ownership"
 fi
-m1_check PASS "state-still-absent" "$M1_IAM_KEY absent"
 
 m1_evidence_record "apply of $plan_file (sha $plan_sha) beginning — single execution, no retry"
 
