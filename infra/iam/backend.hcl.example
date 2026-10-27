@@ -1,0 +1,8 @@
+# Operator workstation backend configuration; git-ignored.
+# Shares the existing CMK-bound state bucket; separate key = separate state.
+bucket    = "eventforge-tfstate-prod"
+namespace = "replace-with-object-storage-namespace"
+key       = "iam/terraform.tfstate"
+region    = "replace-with-region"
+auth      = "APIKey"
+config_file_profile = "DEFAULT"
