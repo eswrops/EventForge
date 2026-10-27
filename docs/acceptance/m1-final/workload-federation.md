@@ -1,11 +1,82 @@
-# Workload federation — prepared configuration (PREPARED, NOT CONFIGURED)
+# Workload federation — configuration created; first exchange BLOCKED on service capability
 
-Status: **Phase 2 preparation complete 2026-10-27 — awaiting explicit OCI-FEDERATION operator
-approval. No identity-domain trust, OAuth client, secret, or IAM change exists.** This file
-consolidates the live verifications performed before the approval gate, the exact configuration
-to be created afterwards, and the sanitized test plan. The authoritative requirements remain
-[../m1b-bootstrap/federation.md](../m1b-bootstrap/federation.md) (§A–§D) and checklist steps
-10–11 of [../m1b-bootstrap/operator-checklist.md](../m1b-bootstrap/operator-checklist.md).
+Status: **OCI-FEDERATION APPROVED and executed 2026-10-27: the two reviewed exchange clients and
+the trust configuration are CREATED and active; GitHub environment secrets and repo variables are
+installed. The first live token exchange is BLOCKED — the identity domain's token endpoint
+refuses the JWT→RPST token-exchange grant (`400 invalid_request`) for every caller, which is a
+service-side capability gap with no operator-facing setting; resolution requires Oracle
+enablement on the tenancy.** No Stage-2 IAM change exists or is affected. The authoritative
+requirements remain [../m1b-bootstrap/federation.md](../m1b-bootstrap/federation.md) (§A–§D) and
+checklist steps 10–11 of
+[../m1b-bootstrap/operator-checklist.md](../m1b-bootstrap/operator-checklist.md).
+
+## 0. Execution record (2026-10-27, under the OCI-FEDERATION approval)
+
+Created in the DEFAULT identity domain
+(`https://idcs-41513dab54d949a5887929115aa16406.identity.oraclecloud.com`, ACTIVE, the tenancy's
+only domain; verified via the `oci_identity_domains` data source; the domain contained only
+Oracle-managed apps before this work):
+
+| Object | Identity-domain id | Configuration |
+| --- | --- | --- |
+| Confidential OAuth client `eventforge-github-plan` | `ed4a989e58ae4d69bd2659e890a55e4c` | `CustomAppTemplateId`, active, confidential, OAuth client, server-stored generated secret (0600 local copy), NO admin/app roles |
+| Confidential OAuth client `eventforge-github-apply` | `ee225cb9396b4e4c9390076c61a789f3` | same shape; independent secret; never shared with the plan client |
+| IdentityPropagationTrust `eventforge-github` | `adbb0c6c8a42480582da7b1ed479c59d` | type JWT; issuer `https://token.actions.githubusercontent.com`; publicKeyEndpoint `https://token.actions.githubusercontent.com/.well-known/jwks`; subjectType `Resource`; allowImpersonation with `impersonatingResource: githubactions` (must equal the exchange's `res_type`); `oauthClients` = BOTH client ids; claimValidations (exact match): `repository=eswrops/EventForge`, `owner=eswrops`, `ref=refs/heads/main`, `ref_type=branch`; claimPropagations: `ext_environment`, `ext_repository`, `ext_ref` (→ RPST `var_ext_*`; `var_name` = JWT `sub`, i.e. the exact immutable subject) |
+
+GitHub side: `OCI_WIF_CONFIG_JSON` installed as the `production-plan` and `production`
+environment secrets (built per §2, secrets generated locally into
+`/Users/eswr/secure/secrets/eventforge-wif/`, mode 0600, never printed or committed); repo
+variables `OCI_REGION`, `TF_STATE_BUCKET`, `OCI_OBJECT_STORAGE_NAMESPACE`,
+`TF_VALIDATION_EXPECTED_KMS_KEY_ID`, `TF_VALIDATION_KMS_COMPARTMENT_OCID` set (non-secret
+coordinates the pre-wired workflows read). The `OCI WIF exchange probe` workflow
+(PR #33/#34, dispatch-only) performs the exchange and prints the sanitized RPST claim mapping.
+
+**Platform-constraint adaptation (documented deviation from §2):** OCI identity domains allow
+only **one** IdentityPropagationTrust per issuer (`409 IdentityPropagationTrust with the same
+issuer already exists` observed live), so §2's two per-environment trusts are impossible on one
+domain. Security-equivalent shape adopted: ONE trust (`eventforge-github`) authorizing BOTH
+clients, with claim validations pinning repository + owner + `refs/heads/main` + `branch` —
+environment separation is still enforced because (a) a GitHub JWT with an environment subject is
+only mintable inside that environment's protection-approved job, (b) each client's secret lives
+only in its own environment, and (c) Stage-2 IAM policies will condition on the RPST's
+propagated subject claims (`var_name` exact subject / `var_ext_environment`). A per-environment
+sub validation cannot be expressed in a single trust (validation rules are conjunctive
+exact-match), so environment binding deliberately moved to the IAM layer, which is also where
+its Stage-2 review lives.
+
+**BLOCKED: the first live token exchange.** `POST /oauth2/v1/token` with
+`grant_type=urn:ietf:params:oauth:grant-type:token-exchange` returns
+`400 {"error":"invalid_request","error_description":"The request contains invalid or missing
+parameters or duplicate values."}` for EVERY caller variant:
+
+1. Real GitHub OIDC JWT (production-plan job, run
+   [40518000542](https://github.com/eswrops/EventForge/actions/runs/40518000542)) with the plan
+   client via Basic auth — the identical error;
+2. Locally replayed exchange with an UNKNOWN client id — the identical error (client
+   authentication is never reached);
+3. Known client with `client_id`/`client_secret` as form parameters, with a `scope` parameter,
+   with the full RFC 8693 `subject_token_type` URN — identical error;
+4. A correctly OCI-signed **user-principal** token-exchange request (SDK-grade request
+   signatures) — the same `invalid_request`.
+
+The domain's OpenID metadata lists only the classic grants (no token-exchange), the trust and
+clients match the published JWT→RPST procedure
+([Exchanging a JSON Web Token for a RPST](https://docs.oracle.com/en-us/iaas/Content/Identity/api-getstarted/token_exchange_grant_type_workload_id-federation.htm)),
+and `settings list` exposes no enablement toggle. Conclusion: the JWT→RPST workload-identity
+grant is not enabled for this tenancy's DEFAULT domain (ap-hyderabad-1) — a service-side
+capability/rollout gap, not a configuration defect. The exchange has NOT succeeded, therefore
+per the mission's own rule no claim-mapping evidence exists and Stage-2 IAM work remains
+blocked behind it.
+
+**Unblock path (operator action):** raise an Oracle support request (SR) asking to enable the
+JWT→RPST token-exchange grant (workload identity federation) for the DEFAULT identity domain of
+tenancy `easwarendraece` in `ap-hyderabad-1`, citing the procedure page above and the
+`invalid_request` evidence. After enablement: dispatch `OCI WIF exchange probe` in
+`production-plan`, then `production`; record the actual `var_name`/`var_ext_*` claim names here
+before any Stage-2 IAM statement is reviewed. The clients' secrets should be rotated at
+enablement time if the SR takes longer than a quarter.
+
+## 1. Live verification performed before the approval gate (all read-only, 2026-10-27)
 
 ## 1. Live verification performed before this gate (all read-only, 2026-10-27)
 
