@@ -14,10 +14,9 @@ touched: every write this package can perform lands under
 This package is immutable once merged: the operator verifies the exact bytes
 before running anything and transcribes the merge commit into the §12 record.
 
-- PR: the squash merge of the PR that introduced this file into `main`
-  (head branch `m1-final/live-validation-hardening`). Transcribe the exact
-  merge commit at execution time with:
-  `git log --format='%H %s' --grep='live-validation-hardening' -1`
+- PR: #22 (squash-merged into `main` through branch protection).
+- Merge commit: `a4e0904a69bad0e16387fafb74b31c0d68ec976a`
+  (verify: `git log --format='%H %s' -1 a4e0904`)
 - Content hashes (sha256), verified before execution:
 
 | File | sha256 |
