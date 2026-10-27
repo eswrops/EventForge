@@ -60,6 +60,8 @@ assert_contains "$variables_tf" 'startswith(var.state_bucket_kms_key_id, "ocid1.
 # The state bucket still pins the CMK and no bucket is public.
 assert_contains "$main_tf" 'kms_key_id     = var.state_bucket_kms_key_id' \
   "state bucket CMK attachment"
+assert_contains "$main_tf" 'depends_on = \[oci_identity_policy.objectstorage_kms\]' \
+  "state bucket waits for the Object Storage KMS policy"
 assert_contains "$main_tf" 'access_type    = "NoPublicAccess"' \
   "NoPublicAccess buckets"
 
