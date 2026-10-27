@@ -38,6 +38,10 @@ resource "oci_identity_policy" "mysql_nsg_membership" {
   statements = [
     "Allow any-user to {NETWORK_SECURITY_GROUP_UPDATE_MEMBERS} in compartment id ${var.db_compartment_ocid} where all {request.principal.type='mysqldbsystem', request.resource.compartment.id='${var.db_compartment_ocid}'}",
   ]
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 # Statement 2 of 2 — subnet compartment (tenancy root): let the DB-system
@@ -56,4 +60,8 @@ resource "oci_identity_policy" "mysql_vnic_update" {
   statements = [
     "Allow any-user to {VNIC_CREATE, VNIC_UPDATE, VNIC_ASSOCIATE_NETWORK_SECURITY_GROUP, VNIC_DISASSOCIATE_NETWORK_SECURITY_GROUP} in compartment id ${var.tenancy_ocid} where all {request.principal.type='mysqldbsystem', request.resource.compartment.id='${var.db_compartment_ocid}'}",
   ]
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }

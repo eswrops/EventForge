@@ -213,9 +213,11 @@ M1_IGNORED_REQUIRED=(
   infra/bootstrap/backend.hcl
   infra/platform/backend.hcl
   infra/frontend/backend.hcl
+  infra/iam/backend.hcl
   infra/bootstrap/terraform.auto.tfvars
   infra/platform/terraform.auto.tfvars
   infra/frontend/terraform.auto.tfvars
+  infra/iam/terraform.auto.tfvars
   infra/platform/imported.auto.tfvars
 )
 

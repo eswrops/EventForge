@@ -22,7 +22,10 @@
    (`ocid1.networksecuritygroup.oc1.ap-hyderabad-1.aaaaaaaay3iipwy7weycrbdb7slmiu44mmhvnxsrizrrs2w7dpag5wur6hga`).
 3. Both required IAM policies are ACTIVE and their statements read back exactly
    as reviewed (`oci iam policy get` for `eventforge-mysql-nsg-membership` and
-   `eventforge-mysql-vnic-update`).
+   `eventforge-mysql-vnic-update`). This read-back is also the policy
+   propagation check (see [../b5-mysql-nsg-diagnosis.md](../b5-mysql-nsg-diagnosis.md)
+   §7): if it fails or drifts from the reviewed text, STOP — do not spend the
+   one attempt on a possibly-unpropagated grant.
 4. `m1-verify.sh` 18 PASS / 0 FAIL.
 
 ## The attempt (exactly one)
@@ -30,10 +33,14 @@
 Method: guarded Terraform apply in `infra/platform` after re-adding
 `nsg_ids = [oci_core_network_security_group.db.id]` to
 `oci_mysql_mysql_db_system.existing` in `imported_resources.tf` — the same
-SHA-bound PLATFORM-APPLY gate used by Scope A (plan must show exactly 1
-in-place update on `oci_mysql_mysql_db_system.existing`, attribute
-`nsg_ids` only, via the scope-A attribute-level checker restricted to this
-address).
+SHA-bound PLATFORM-APPLY gate used by Scope A, with the plan additionally
+checked against the DEDICATED retest policy
+`scripts/ci/platform-safe-plan-mysql-retest-policy.json` (via
+`scripts/ci/assert-safe-plan-scope-a.sh`): exactly 1 in-place update on
+`oci_mysql_mysql_db_system.existing`, attribute `nsg_ids` only, `[]` →
+`[eventforge-db-nsg]`; any other attribute, resource, security-list change,
+or ingress rule is refused by the policy fixtures
+(`tests/ci/test-safe-plan-mysql-retest.sh`).
 
 - Expected resource diff: `nsg_ids: [] → [eventforge-db-nsg]`, nothing else.
 - Plan SHA-256: `<sha256>` · Commit: `<sha>`

@@ -3,36 +3,46 @@
 > **Template.** Execution is REFUSED until the operator fills every
 > `<fill>` field below. Creating the two IAM policies is the only authorized
 > mutation. See [../b5-mysql-nsg-diagnosis.md](../b5-mysql-nsg-diagnosis.md)
-> for the diagnosis this corrects and
-> [../mysql-nsg-retest-approval.md](../mysql-nsg-retest-approval.md) for the
-> separately approved retest.
+> for the diagnosis this corrects (§7 execution-safety contracts, §8
+> tenancy-root determination) and
+> [mysql-nsg-retest-approval.template](mysql-nsg-retest-approval.template)
+> for the separately approved retest. Execution is tool-guarded:
+> `scripts/local/m1-iam-init.sh` → `m1-iam-plan.sh` → `m1-iam-apply.sh`
+> (this record is the apply's approval record; every binding below is
+> machine-verified before any live access).
 
 ## Grant
 
-- Approved by: `<operator name>`
+- Approved by: `<operator name>` (must equal the `M1_IAM_APPLY_APPROVED_BY`
+  environment attestation at apply time)
 - Grant phrase: `<verbatim operator grant>`
 - Timestamp (UTC): `<YYYY-MM-DDTHH:MM:SSZ>`
-- Source commit (must be the merged main commit containing `infra/iam/`): `<sha>`
+- Source commit (must be the full merged main commit containing
+  `infra/iam/`): `<sha>`
 
 ## Bound mutation
 
 - Root: `infra/iam` — plan **2 to add, 0 to change, 0 to destroy**
-- Saved-plan SHA-256 (regenerate at the pinned commit with
-  `terraform init -backend-config=backend.hcl && terraform plan -out=tfplan.bin`,
-  then `shasum -a 256 tfplan.bin`): `<sha256>`
-- Resources created (exactly these two, no others):
-  - `oci_identity_policy.mysql_nsg_membership` (Test compartment) —
-    `NETWORK_SECURITY_GROUP_UPDATE_MEMBERS` for `mysqldbsystem` principals of
-    DB systems in Test
-  - `oci_identity_policy.mysql_vnic_update` (tenancy) — `VNIC_CREATE,
-    VNIC_UPDATE, VNIC_ASSOCIATE_NETWORK_SECURITY_GROUP,
-    VNIC_DISASSOCIATE_NETWORK_SECURITY_GROUP` for the same principals,
-    scoped to root-compartment resources
+- Saved-plan SHA-256 (generated at the pinned commit by `m1-iam-plan.sh`;
+  recorded in the plan metadata): `<sha256>`
+- Expected initial state: `iam/terraform.tfstate` **absent** (fresh root;
+  the apply refuses if the key exists)
+- Resources created (exactly these two addresses, no others):
+  - `oci_identity_policy.mysql_nsg_membership` (compartment: Test,
+    `ocid1.compartment.oc1..aaaaaaaar3kvayxcj4vuo6ydkoaxrh4yeovnvr6rgxr7kdljzijrpbxaz3ea`)
+  - `oci_identity_policy.mysql_vnic_update` (compartment: tenancy root,
+    `ocid1.tenancy.oc1..aaaaaaaazzqo7xp5qax5ebj375o7qgnpyhxfxwrfq5e3ldjoxngx7nouwtsq`)
+- Complete policy statements (verbatim; the apply verifies these strings
+  character-for-character against the rendered contract
+  `scripts/ci/iam-plan-contract.json`):
+  - Statement 1: `<paste rendered statement 1 from m1-iam-plan.sh evidence>`
+  - Statement 2: `<paste rendered statement 2 from m1-iam-plan.sh evidence>`
 
 ## Preconditions (verify before apply)
 
-1. Fresh plan at the pinned commit equals the reviewed diff (statements and
-   compartments exactly as in `infra/iam/main.tf`; no other changes).
+1. Fresh plan at the pinned commit passes the IAM contract checker
+   (statements and compartments exactly as in `infra/iam/main.tf`; no other
+   resource changes).
 2. `m1-verify.sh` on the platform root still passes 18/0 (no platform drift).
 3. MySQL DB system `rust-api-heatwave` is ACTIVE and `nsg_ids = []`.
 
@@ -42,10 +52,12 @@
   statement differing from the reviewed text → STOP.
 - Policy-create API error (e.g., syntax rejection of
   `in compartment id <tenancy-ocid>`) → STOP; do not fall back to
-  `in tenancy` or any broader location without a new approval.
+  `in tenancy` or any broader location without a new approval
+  (../b5-mysql-nsg-diagnosis.md §8).
 - Anything else unexpected → STOP, preserve logs.
 
 ## Explicitly not authorized by this approval
 
 MySQL NSG retry, security-list changes, Terraform applies in other roots,
-GitHub Stage-2 workload policies, federation changes, scope B.
+GitHub Stage-2 workload policies, federation changes, scope B. A successful
+apply does NOT resolve B5 by itself and does NOT authorize the retest.

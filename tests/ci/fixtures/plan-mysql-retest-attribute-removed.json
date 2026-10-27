@@ -1,0 +1,1 @@
+{"resource_changes":[{"address":"oci_mysql_mysql_db_system.existing","type":"oci_mysql_mysql_db_system","change":{"actions":["update"],"before":{"display_name":"rust-api-heatwave","nsg_ids":[]},"after":{"display_name":"rust-api-heatwave"},"after_unknown":{}}}]}
