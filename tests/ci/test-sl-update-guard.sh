@@ -143,7 +143,8 @@ RECORDED-INGRESS-HASH: $live_ih
 RECORDED-EGRESS-HASH: $live_eh
 EOF
 cp "$fixtures/record-ok.txt" "$fixtures/record-wrong-gate.txt"
-sed -i '' 's/^GATE: SL-CORRECTION$/GATE: SOMETHING-ELSE/' "$fixtures/record-wrong-gate.txt"
+awk '{if ($0 == "GATE: SL-CORRECTION") print "GATE: SOMETHING-ELSE"; else print}' \
+  "$fixtures/record-ok.txt" > "$fixtures/record-wrong-gate.txt"
 cat > "$fixtures/record-wrong-hashes.txt" <<EOF
 GATE: SL-CORRECTION
 APPROVER: Test Operator
