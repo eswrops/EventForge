@@ -19,8 +19,8 @@ before running anything and transcribes the merge commit into the §12 record.
 - Safety patch 1: the focused PR that introduced the object-absence,
   copy-race, and precondition hardening (squash-merged into `main` through
   branch protection).
-- Merge commit: `SAFETY_PATCH_MERGE_SHA` — replaced by a docs-only stamp
-  commit immediately after the merge (the `a4e0904` precedent).
+- Merge commit: `938ff899b68367fb408a17a6d1a8eea758d62894`
+  (verify: `git log --format='%H %s' -1 938ff89`)
 - Content hashes (sha256), verified before execution:
 
 | File | sha256 |
