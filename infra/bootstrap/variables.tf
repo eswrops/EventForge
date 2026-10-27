@@ -27,6 +27,23 @@ variable "state_bucket_name" {
 variable "state_bucket_kms_key_id" {
   type        = string
   description = "OCI Vault key OCID used to encrypt Terraform state objects at rest."
+
+  # The key must live in the same region as the buckets: Object Storage can
+  # only use a CMK from its own region, so a mismatch would fail the apply.
+  validation {
+    condition     = startswith(var.state_bucket_kms_key_id, "ocid1.key.oc1.${var.region}.")
+    error_message = "state_bucket_kms_key_id must be a Vault key OCID from the same region as the bootstrap buckets."
+  }
+}
+
+variable "kms_key_compartment_ocid" {
+  type        = string
+  description = "Compartment containing the state-bucket master encryption key (may differ from the bucket compartment)."
+
+  validation {
+    condition     = can(regex("^ocid1\\.compartment\\.oc1\\.", var.kms_key_compartment_ocid))
+    error_message = "kms_key_compartment_ocid must be a compartment OCID."
+  }
 }
 
 variable "backup_bucket_name" {

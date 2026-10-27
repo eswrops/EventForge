@@ -17,6 +17,11 @@ config_field() {
   jq -er --arg field "$field" '.[$field] | strings | select(length > 0)' <<<"$OCI_WIF_CONFIG_JSON"
 }
 
+numeric_config_field() {
+  local field="$1"
+  jq -er --arg field "$field" '.[$field] | tostring | select(test("^[0-9]+$"))' <<<"$OCI_WIF_CONFIG_JSON"
+}
+
 domain_url="$(config_field token_exchange_domain_url)"
 client_id="$(config_field token_exchange_client_id)"
 client_secret="$(config_field token_exchange_client_secret)"
@@ -24,6 +29,10 @@ resource_type="$(config_field token_exchange_resource_type)"
 audience="$(jq -er '.audience // "github-actions" | strings | select(length > 0)' <<<"$OCI_WIF_CONFIG_JSON")"
 expected_repository="$(config_field repository)"
 expected_environment="$(config_field environment)"
+# Immutable numeric identities; the subject is built from them so a repository
+# rename or transfer can never satisfy this trust.
+repository_owner_id="$(numeric_config_field repository_owner_id)"
+repository_id="$(numeric_config_field repository_id)"
 expected_issuer="$(jq -er '.issuer // "https://token.actions.githubusercontent.com" | strings | select(length > 0)' <<<"$OCI_WIF_CONFIG_JSON")"
 rpst_exp="$(jq -er '.token_exchange_rpst_exp // "60" | tostring | select(test("^[0-9]+$"))' <<<"$OCI_WIF_CONFIG_JSON")"
 
@@ -55,23 +64,32 @@ curl --fail --silent --show-error \
   "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${audience}" \
   | jq -er '.value | strings | select(length > 0)' > "$token_path"
 
-# Protected workflow jobs use GitHub's environment subject format exactly.
-# This rejects branch, tag, pull-request, other-repository, wrong-audience and
-# expired tokens before they reach the exchange endpoint. Padding is restored
-# before decode: BSD base64 silently truncates unpadded input.
+# Protected workflow jobs must present GitHub's immutable subject exactly:
+# repo:<owner>@<owner_id>/<repo>@<repo_id>:environment:<environment>, with the
+# numeric claims matching. This rejects branch, tag, pull-request,
+# other-repository, renamed-repository, legacy name-only subjects,
+# wrong-audience and expired tokens before they reach the exchange endpoint.
 jwt_payload="$(cut -d. -f2 "$token_path" | tr '_-' '/+' \
   | awk '{ l = length($0); m = l % 4; if (m == 2) print $0 "=="; else if (m == 3) print $0 "="; else print }' \
   | base64 --decode 2>/dev/null || true)"
+repo_owner="${expected_repository%%/*}"
+repo_name="${expected_repository#*/}"
+expected_sub="repo:${repo_owner}@${repository_owner_id}/${repo_name}@${repository_id}:environment:${expected_environment}"
 if ! jq -e \
   --arg issuer "$expected_issuer" \
   --arg audience "$audience" \
   --arg repository "$expected_repository" \
-  --arg environment "$expected_environment" '
+  --arg environment "$expected_environment" \
+  --arg sub "$expected_sub" \
+  --argjson repository_owner_id "$repository_owner_id" \
+  --argjson repository_id "$repository_id" '
     (.iss == $issuer) and
     ((.aud == $audience) or ((.aud | type == "array") and any(.[]; . == $audience))) and
     (.repository == $repository) and
+    (.repository_id == $repository_id) and
+    (.repository_owner_id == $repository_owner_id) and
     (.environment == $environment) and
-    (.sub == ("repo:" + $repository + ":environment:" + $environment)) and
+    (.sub == $sub) and
     (.exp | type == "number") and (.exp > now)
   ' <<<"$jwt_payload" >/dev/null; then
   echo "GitHub OIDC claims are missing, expired, or do not match the protected workload." >&2

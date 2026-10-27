@@ -18,11 +18,13 @@ Verified facts are marked ✅; desired-but-missing state is marked ⛔.
 
 ## 2. Expected immutable OIDC subject claim templates
 
-For jobs running in the protected environments, the GitHub-issued JWT must match exactly:
+GitHub's immutable subject format (mandatory for all repositories since 2026-06-18;
+`repo:eswrops/EventForge` was created after the 2026-07-15 automatic cutover, so its tokens use it
+natively) embeds the verified numeric IDs, which a rename or transfer can never satisfy:
 
 ```text
-production-plan:  sub = repo:eswrops/EventForge:environment:production-plan
-production:       sub = repo:eswrops/EventForge:environment:production
+production-plan:  sub = repo:eswrops@237514587/EventForge@1434990962:environment:production-plan
+production:       sub = repo:eswrops@237514587/EventForge@1434990962:environment:production
 common:           iss = https://token.actions.githubusercontent.com
                   aud = github-actions
                   repository = eswrops/EventForge
@@ -32,6 +34,10 @@ common:           iss = https://token.actions.githubusercontent.com
                   job_workflow_ref = eswrops/EventForge/.github/workflows/<file>@refs/heads/main
                   iat/exp: numeric, exp > now, exp - iat <= 3660s
 ```
+
+Legacy name-only subjects (`repo:eswrops/EventForge:environment:...`) are **rejected** by both
+claim checks; fixtures cover them negatively. The first protected live claim inspection (checklist
+step 5) must confirm the exact numeric subject before any OCI trust is configured.
 
 ## 3. Claim-inspection procedure (added, fixture-tested)
 
@@ -85,6 +91,52 @@ or variable in the environment.
 
 ## 5. `main` branch protection — desired state ⛔
 
+### 5a. Current configuration (single-maintainer era)
+
+Until an independent reviewer is available, protection must not require approvals — that would
+deadlock the sole maintainer — but direct pushes to `main` must be impossible anyway. Every change
+travels through a PR whose CI must pass; no human second approval exists yet, and that limitation
+is deliberate and recorded here.
+
+```bash
+gh api -X PUT repos/eswrops/EventForge/branches/main/protection --input - <<'JSON'
+{
+  "required_status_checks": {
+    "strict": true,
+    "contexts": [
+      "Format and validate (infra/bootstrap)",
+      "Format and validate (infra/platform)",
+      "Format and validate (infra/frontend)",
+      "CI script and workflow checks"
+    ]
+  },
+  "enforce_admins": true,
+  "required_pull_request_reviews": {
+    "required_approving_review_count": 0,
+    "dismiss_stale_reviews": true,
+    "require_code_owner_reviews": false
+  },
+  "restrictions": null,
+  "allow_force_pushes": false,
+  "allow_deletions": false,
+  "required_linear_history": true
+}
+JSON
+```
+
+- `required_approving_review_count: 0` + the required PR rules mean PRs are mandatory while no
+  approval can be demanded from a nonexistent second reviewer; combined with `enforce_admins: true`
+  and `required_status_checks.strict`, even the administrator must open PRs and wait for CI.
+- Direct pushes are therefore impossible for everyone, including admins.
+- Residual limitation (accepted, single-maintainer era): with zero required approvals, the sole
+  maintainer self-merges. The GITHUB_TOKEN cannot approve PRs
+  (`can_approve_pull_request_reviews: false`, verified by the preflight `gh-token-permissions`
+  check), so automation cannot inflate approvals either.
+
+### 5b. Future configuration (apply when another eligible reviewer exists)
+
+The moment a second eligible reviewer is available, switch to one required independent approval:
+
 ```bash
 gh api -X PUT repos/eswrops/EventForge/branches/main/protection --input - <<'JSON'
 {
@@ -111,12 +163,10 @@ gh api -X PUT repos/eswrops/EventForge/branches/main/protection --input - <<'JSO
 JSON
 ```
 
-- `enforce_admins: true` means the admin account is also subject to required reviews and status
-  checks; with a single admin this still permits self-approval — the residual risk is accepted and
-  documented until a second reviewer exists.
-- `strict: true` keeps the merge ref up to date with `main` before checks run.
-- The four context names are the exact job names of the `Terraform` workflow (verified in run
-  40418147090).
+Record the transition (date, new reviewer) in this file; the preflight accepts either review count
+and verifies the review-independent properties (PR required, admin-enforced, no force pushes, no
+deletion, all four CI contexts). The four context names are the exact job names of the `Terraform`
+workflow (verified in run 40418147090).
 
 ## 6. GitHub Actions hardening — desired state ⛔
 

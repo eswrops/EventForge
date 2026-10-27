@@ -42,11 +42,13 @@ resource "oci_identity_policy" "objectstorage_kms" {
   name           = "eventforge-objectstorage-kms"
   description    = "Permits the Object Storage service to use the state-bucket master encryption key."
 
-  # Without this statement, creating a bucket with kms_key_id fails on the
-  # service side because Object Storage cannot use the Vault key. The key must
-  # already exist in the same region as the bucket.
+  # The service subject is hyphenated (objectstorage-<region>) per the OCI
+  # policy reference; without this statement, creating a bucket with
+  # kms_key_id fails on the service side because Object Storage cannot use the
+  # Vault key. Key permissions are scoped to the key's own compartment (which
+  # may differ from the bucket compartment) and pinned to the exact key OCID.
   statements = [
-    "Allow service objectstorage_${var.region} to use keys in compartment id ${var.compartment_ocid} where target.key.id = '${var.state_bucket_kms_key_id}'",
+    "Allow service objectstorage-${var.region} to use keys in compartment id ${var.kms_key_compartment_ocid} where target.key.id = '${var.state_bucket_kms_key_id}'",
   ]
 }
 

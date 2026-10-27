@@ -14,8 +14,10 @@ expected_issuer="${EXPECTED_ISSUER:-https://token.actions.githubusercontent.com}
 expected_audience="${EXPECTED_AUDIENCE:-github-actions}"
 expected_repository="${EXPECTED_REPOSITORY:-${GITHUB_REPOSITORY:-}}"
 expected_ref="${EXPECTED_REF:-refs/heads/main}"
-expected_repository_id="${EXPECTED_REPOSITORY_ID:-}"
-expected_repository_owner_id="${EXPECTED_REPOSITORY_OWNER_ID:-}"
+# Verified numeric identities for eswrops/EventForge (REST, M1B.1). The
+# immutable subject is built from them; a rename or transfer cannot satisfy it.
+expected_repository_id="${EXPECTED_REPOSITORY_ID:-1434990962}"
+expected_repository_owner_id="${EXPECTED_REPOSITORY_OWNER_ID:-237514587}"
 
 failures=0
 note() { printf '%s\n' "$*"; }
@@ -54,18 +56,23 @@ if ! jq -e 'type == "object"' <<<"$claims" >/dev/null 2>&1; then
   exit 65
 fi
 
-# Numeric repository/owner IDs are resolved live from GitHub's REST API so the
-# JWT is validated against GitHub's registry, not a copyable constant. When the
-# API is unreachable, explicitly provided EXPECTED_REPOSITORY_ID / EXPECTED_
-# REPOSITORY_OWNER_ID values are used; fail closed if neither is available.
-if [[ -z "$expected_repository_id" || -z "$expected_repository_owner_id" ]]; then
-  api_response="$(curl --fail --silent --show-error \
-    ${GITHUB_TOKEN:+-H "Authorization: Bearer ${GITHUB_TOKEN}"} \
-    "https://api.github.com/repos/${expected_repository}" 2>/dev/null || true)"
-  if jq -e '(.id | type) == "number" and (.owner.id | type) == "number"' <<<"$api_response" >/dev/null 2>&1; then
-    expected_repository_id="${expected_repository_id:-$(jq -r '.id' <<<"$api_response")}"
-    expected_repository_owner_id="${expected_repository_owner_id:-$(jq -r '.owner.id' <<<"$api_response")}"
+# The verified numeric identities are the expected values. GitHub's REST API
+# is consulted live as a second factor: if reachable, its IDs must agree with
+# the expected constants — any drift (transfer, replacement repository) fails
+# closed before federation is ever attempted.
+api_response="$(curl --fail --silent --show-error \
+  ${GITHUB_TOKEN:+-H "Authorization: Bearer ${GITHUB_TOKEN}"} \
+  "https://api.github.com/repos/${expected_repository}" 2>/dev/null || true)"
+if jq -e '(.id | type) == "number" and (.owner.id | type) == "number"' <<<"$api_response" >/dev/null 2>&1; then
+  live_repo_id="$(jq -r '.id' <<<"$api_response")"
+  live_owner_id="$(jq -r '.owner.id' <<<"$api_response")"
+  if [[ "$live_repo_id" != "$expected_repository_id" || "$live_owner_id" != "$expected_repository_owner_id" ]]; then
+    record "github-identity-drift" MISMATCH "live REST ids (repo ${live_repo_id}, owner ${live_owner_id}) differ from the verified constants"
+  else
+    note "github-identity-drift: OK (REST confirms repo ${live_repo_id}, owner ${live_owner_id})"
   fi
+else
+  note "github-identity-drift: SKIPPED (GitHub REST API unreachable; relying on verified constants)"
 fi
 
 claim_equal() {
@@ -99,7 +106,10 @@ fi
 claim_equal "repository_id" "${expected_repository_id:-unavailable}"
 claim_equal "repository_owner_id" "${expected_repository_owner_id:-unavailable}"
 
-expected_sub="repo:${expected_repository}:environment:${EXPECTED_ENVIRONMENT}"
+# Immutable subject: repo:<owner>@<owner_id>/<repo>@<repo_id>:environment:<env>
+repo_owner="${expected_repository%%/*}"
+repo_name="${expected_repository#*/}"
+expected_sub="repo:${repo_owner}@${expected_repository_owner_id}/${repo_name}@${expected_repository_id}:environment:${EXPECTED_ENVIRONMENT}"
 if [[ "$sub" == "$expected_sub" ]]; then
   note "subject: OK ($sub)"
 else

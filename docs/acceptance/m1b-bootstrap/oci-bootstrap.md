@@ -40,12 +40,21 @@ ingress is created (the bootstrap root has no ingress concept at all).
   `eventforge-tfstate-key`) in that vault rather than reusing the secrets key, so state encryption
   and secret encryption have independent key lifecycle and rotation. If `rust-api-secret-key` is
   reused instead, record that decision here.
-- Permissions: the operator applying the root must be allowed to `use keys`; the new
-  `eventforge-objectstorage-kms` policy grants the Object Storage service its side. If the key is
-  created in a non-root compartment, the policy's `compartment id` term must be adjusted to the
-  key's compartment.
-- Encryption validation: after apply, verify the bucket's `kms-key-id` equals the CMK OCID and list
-  one state object's `kms-key-id` ([state-recovery.md](state-recovery.md)).
+- Permissions: the operator applying the root must be allowed to `use keys`; the
+  `eventforge-objectstorage-kms` policy grants the Object Storage service its side. **Corrected in
+  M1B.1.1:** the service subject is hyphenated — `Allow service objectstorage-${var.region} to use
+  keys in compartment id ${var.kms_key_compartment_ocid} where target.key.id =
+  '${var.state_bucket_kms_key_id}'` — per the [OCI Object Storage policy
+  reference](https://docs.oracle.com/en-us/iaas/Content/Identity/Reference/objectstoragepolicyreference.htm);
+  the earlier underscore form was incorrect. Key permissions are scoped to the **key's own
+  compartment** via the new required `kms_key_compartment_ocid` variable (it may differ from the
+  bucket compartment) and pinned to the exact key OCID. Terraform validates regional
+  compatibility at plan time (`state_bucket_kms_key_id` must start with
+  `ocid1.key.oc1.<region>.`), and `tests/ci/test-bootstrap-policy.sh` locks the statement form
+  so neither defect can regress.
+- Encryption validation: after apply, verify the bucket's `kms-key-id` equals the CMK OCID, list
+  one state object's `kms-key-id`, and confirm the key is ENABLED — the preflight
+  `post-bootstrap` mode performs this live ([state-recovery.md](state-recovery.md) §5).
 - Rotation/loss procedures: rotation = create a new key version (object storage keeps reading the
   latest version); documented in [state-recovery.md](state-recovery.md). Losing the key without
   retaining a state backup makes the state permanently unreadable — the mandatory pre-apply state

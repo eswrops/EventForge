@@ -12,14 +12,15 @@ with its exact command, identity, expected effects, and rollback in
 
 | Document | Purpose |
 | --- | --- |
-| [github-security.md](github-security.md) | Operator-reviewable definitions for the two protected environments, `main` branch protection, and Actions hardening (nothing has been applied to GitHub). |
+| [github-security.md](github-security.md) | Operator-reviewable definitions for the two protected environments, `main` branch protection (single-maintainer era now; independent-approval configuration ready), and Actions hardening (nothing has been applied to GitHub). |
 | [oci-bootstrap.md](oci-bootstrap.md) | Exact proposed bootstrap resource inventory (offline plan verified: 10 creates), Vault/CMK dependency analysis, Always Free consumption estimate. |
-| [federation.md](federation.md) | The two distinct workload identities (`production-plan`, `production`): trust requirements, expected OIDC claims, OAuth client requirements, rotation, and the drafted least-privilege IAM statements. |
+| [federation.md](federation.md) | The two distinct workload identities (`production-plan`, `production`): immutable numeric subject requirements, expected OIDC claims, OAuth client requirements, rotation, and the drafted least-privilege IAM statements. |
 | [state-recovery.md](state-recovery.md) | State initialization, backup, native-backend authentication, isolated lock validation, encryption validation, version recovery, and rollback procedures. |
 | [import-safety.md](import-safety.md) | Import mapping audit against the live M1B inventory, managed vs read-only classification, import execution checklist. |
-| [operator-checklist.md](operator-checklist.md) | The ordered, approval-gated execution checklist — the only place mutating steps are defined. |
+| [operator-checklist.md](operator-checklist.md) | The ordered, approval-gated execution checklist (13 steps) — the only place mutating steps are defined. |
+| [corrections.md](corrections.md) | M1B.1.1 verified corrections: hyphenated KMS service subject, immutable numeric OIDC subjects, single-maintainer protection, preflight fixes. |
 | [blockers.md](blockers.md) | What is still BLOCKED and the exact operator action for each. |
-| [m1b-bootstrap-report.json](m1b-bootstrap-report.json) | Sanitized machine-readable acceptance report for this preparation phase. |
+| [m1b-bootstrap-report.json](m1b-bootstrap-report.json) | Sanitized machine-readable acceptance report for the M1B.1 preparation (M1B.1.1 corrections are documented in corrections.md and the PR). |
 
 ## Headline results of the preparation
 

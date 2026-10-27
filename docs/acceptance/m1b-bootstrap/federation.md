@@ -12,17 +12,19 @@ that is checklist step F in [operator-checklist.md](operator-checklist.md).
 | --- | --- |
 | Issuer | `https://token.actions.githubusercontent.com` |
 | Audience | `github-actions` |
-| Subject (plan) | `repo:eswrops/EventForge:environment:production-plan` |
-| Subject (apply) | `repo:eswrops/EventForge:environment:production` |
+| Subject (plan) | `repo:eswrops@237514587/EventForge@1434990962:environment:production-plan` |
+| Subject (apply) | `repo:eswrops@237514587/EventForge@1434990962:environment:production` |
 | Numeric repository ID | `1434990962` |
 | Numeric repository owner ID | `237514587` |
 | Ref | `refs/heads/main` (`ref_type: branch`) |
 | Workflow identity | `job_workflow_ref` starts with `eswrops/EventForge/.github/workflows/` and ends with `@refs/heads/main` |
 | Validity | numeric `iat`/`exp`; `exp > now`; lifetime ≤ 3660 s |
 
-These are exactly the claims `scripts/ci/inspect-oidc-claims.sh` enforces; run the protected
-`OIDC claim inspection` workflow once per environment after the environments exist and require
-`Result: PASS` before proceeding to trust creation.
+The subjects use GitHub's immutable format (numeric IDs mandatory since 2026-06-18); legacy
+name-only subjects are rejected. These are exactly the claims
+`scripts/ci/inspect-oidc-claims.sh` enforces; run the protected `OIDC claim inspection` workflow
+once per environment after the environments exist and require `Result: PASS` — **before** any OCI
+trust is configured — and again inside `configure-oci-wif.sh` at every federation exchange.
 
 ## B. Identity-domain trust requirements (per environment)
 
@@ -33,18 +35,22 @@ Create **two independent** trust configurations in the OCI identity domain (neve
    are stored only as the respective environment's `OCI_WIF_CONFIG_JSON` secret; they are never
    committed, shared across environments, or printed.
 2. Each client's token-exchange policy validates the GitHub OIDC JWT: issuer, audience, and the
-   environment-specific subject from §A. Constrain to the exact subject strings (and, where the
-   domain supports claim conditions, to `repository_id = 1434990962` and `ref_type = branch`).
+   environment-specific **immutable subject** from §A
+   (`repo:eswrops@237514587/EventForge@1434990962:environment:<environment>`). Constrain to the
+   exact subject strings — never name-only forms — and, where the domain supports claim conditions,
+   to `repository_id = 1434990962` and `ref_type = branch`.
 3. Resource type `githubactions`, RPST lifetime 60 minutes
    (`token_exchange_rpst_exp: "60"`; accepted range 1–720).
 
 **Protected configuration fields** of `OCI_WIF_CONFIG_JSON`
 (`scripts/ci/configure-oci-wif.sh` is the only consumer): `token_exchange_domain_url`,
 `token_exchange_client_id`, `token_exchange_client_secret`, `token_exchange_resource_type`,
-`audience`, `repository` (`eswrops/EventForge`), `environment` (`production-plan` / `production`),
-`issuer`, `token_exchange_rpst_exp`. The helper validates the JWT claims, generates a **one-run
-RSA keypair**, exchanges JWT+public key for the RPST, refuses malformed/expired RPSTs, and exports
-only temporary `OCI_RESOURCE_PRINCIPAL_*` file paths (0600) — never token material.
+`audience`, `repository` (`eswrops/EventForge`), **`repository_owner_id` (`237514587`),
+`repository_id` (`1434990962`)**, `environment` (`production-plan` / `production`), `issuer`,
+`token_exchange_rpst_exp`. The helper validates the JWT claims — including the numeric repository
+and owner IDs and the immutable subject built from them — generates a **one-run RSA keypair**,
+exchanges JWT+public key for the RPST, refuses malformed/expired RPSTs, and exports only temporary
+`OCI_RESOURCE_PRINCIPAL_*` file paths (0600) — never token material.
 
 **Expiration and rotation:**
 

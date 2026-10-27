@@ -15,7 +15,7 @@ if [[ "$url" == https://api.github.com/repos/* ]]; then
   if [[ "${MOCK_GH_API_FAIL:-false}" == true ]]; then
     exit 22
   fi
-  printf '{"id":1434990962,"owner":{"id":237514587,"login":"eswrops"}}\n'
+  printf '{"id":%s,"owner":{"id":%s,"login":"eswrops"}}\n' "${MOCK_GH_REPO_ID:-1434990962}" "${MOCK_GH_OWNER_ID:-237514587}"
   exit 0
 fi
 printf '{"value":"%s"}\n' "${MOCK_OIDC_TOKEN:?}"
@@ -40,7 +40,7 @@ valid_claims="$(jq -nc --argjson iat "$((now - 60))" --argjson exp "$((now + 354
   ref:"refs/heads/main",
   ref_type:"branch",
   environment:"production-plan",
-  sub:"repo:eswrops/EventForge:environment:production-plan",
+  sub:"repo:eswrops@237514587/EventForge@1434990962:environment:production-plan",
   job_workflow_ref:"eswrops/EventForge/.github/workflows/oidc-claim-inspection.yml@refs/heads/main",
   iat:$iat,
   exp:$exp
@@ -51,6 +51,8 @@ run_helper() {
   PATH="$temp_dir/bin:$PATH" \
   MOCK_OIDC_TOKEN="${TEST_JWT:-$valid_jwt}" \
   MOCK_GH_API_FAIL="${TEST_GH_API_FAIL:-false}" \
+  MOCK_GH_REPO_ID="${TEST_MOCK_REPO_ID:-1434990962}" \
+  MOCK_GH_OWNER_ID="${TEST_MOCK_OWNER_ID:-237514587}" \
   ACTIONS_ID_TOKEN_REQUEST_URL='https://github.example.test/token?request=1' \
   ACTIONS_ID_TOKEN_REQUEST_TOKEN='github-request-token' \
   EXPECTED_ENVIRONMENT="${TEST_EXPECTED_ENV:-production-plan}" \
@@ -63,7 +65,7 @@ run_helper() {
 output="$(run_helper)"
 if ! grep -q 'Result: PASS' <<<"$output"; then
   echo "Valid claims must pass inspection." >&2
-  grep -q "$valid_jwt" <<<"$output" && echo "JWT leaked into output" >&2
+  echo "$output" >&2
   exit 1
 fi
 if grep -Fq "$valid_jwt" <<<"$output"; then
@@ -80,7 +82,7 @@ expect_failure() {
   fi
 }
 
-TEST_JWT="$(make_jwt "$(jq -c '."repository" = "other/repo" | ."sub" = "repo:other/repo:environment:production-plan"' <<<"$valid_claims")")" \
+TEST_JWT="$(make_jwt "$(jq -c '."repository" = "other/repo" | ."sub" = "repo:other@1/repo@2:environment:production-plan"' <<<"$valid_claims")")" \
   expect_failure 'wrong repository claim' run_helper
 TEST_JWT="$(make_jwt "$(jq -c '."repository_id" = 999' <<<"$valid_claims")")" \
   expect_failure 'wrong numeric repository id' run_helper
@@ -92,19 +94,29 @@ TEST_JWT="$(make_jwt "$(jq -c '."ref" = "refs/heads/feature"' <<<"$valid_claims"
   expect_failure 'unexpected ref' run_helper
 TEST_JWT="$(make_jwt "$(jq -c '."ref_type" = "tag"' <<<"$valid_claims")")" \
   expect_failure 'tag ref' run_helper
-TEST_JWT="$(make_jwt "$(jq -c '."sub" = "repo:eswrops/EventForge:ref:refs/heads/main"' <<<"$valid_claims")")" \
+TEST_JWT="$(make_jwt "$(jq -c '."sub" = "repo:eswrops/EventForge:environment:production-plan"' <<<"$valid_claims")")" \
+  expect_failure 'legacy name-only subject' run_helper
+TEST_JWT="$(make_jwt "$(jq -c '."sub" = "repo:eswrops@237514587/EventForge@999:environment:production-plan"' <<<"$valid_claims")")" \
+  expect_failure 'wrong repository id inside subject' run_helper
+TEST_JWT="$(make_jwt "$(jq -c '."sub" = "repo:eswrops@999/EventForge@1434990962:environment:production-plan"' <<<"$valid_claims")")" \
+  expect_failure 'wrong owner id inside subject' run_helper
+TEST_JWT="$(make_jwt "$(jq -c '."sub" = "repo:eswrops@237514587/EventForge@1434990962:ref:refs/heads/main"' <<<"$valid_claims")")" \
   expect_failure 'branch-ref subject (non-environment job)' run_helper
 TEST_JWT="$(make_jwt "$(jq -c --argjson now "$now" '.exp = ($now - 10) | .iat = ($now - 3610)' <<<"$valid_claims")")" \
   expect_failure 'expired token' run_helper
 TEST_JWT="$(make_jwt "$(jq -c 'del(."environment")' <<<"$valid_claims")")" \
   expect_failure 'missing environment claim' run_helper
-TEST_JWT="$(make_jwt "$(jq -c '."repository_id" = 999' <<<"$valid_claims")")" TEST_GH_API_FAIL=true \
-  expect_failure 'GitHub API outage with no explicit expected ids' run_helper
-
-# GitHub API outage is tolerated only when exact expected numeric ids are supplied.
-TEST_GH_API_FAIL=true TEST_EXPECTED_REPO_ID=1434990962 TEST_EXPECTED_OWNER_ID=237514587 run_helper | grep -q 'Result: PASS'
-
-# A branch-prefixed subject from a non-environment job must never pass for the protected environment.
 TEST_EXPECTED_ENV='production' expect_failure 'environment mismatch on subject' run_helper
+
+# GitHub REST identity drift must fail closed even when the JWT is self-consistent.
+TEST_MOCK_REPO_ID=999999999 expect_failure 'REST repository id drift' run_helper
+TEST_MOCK_OWNER_ID=999999999 expect_failure 'REST owner id drift' run_helper
+
+# A GitHub API outage is tolerated: inspection proceeds on the verified constants.
+TEST_GH_API_FAIL=true run_helper | grep -q 'Result: PASS'
+
+# Explicitly supplied expected ids must agree with what the token presents.
+TEST_EXPECTED_REPO_ID=1 TEST_EXPECTED_OWNER_ID=2 expect_failure 'explicit expected ids mismatch' run_helper
+TEST_GH_API_FAIL=true TEST_EXPECTED_REPO_ID=1434990962 TEST_EXPECTED_OWNER_ID=237514587 run_helper | grep -q 'Result: PASS'
 
 echo "OIDC claim inspection fixtures passed"
