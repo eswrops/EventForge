@@ -27,6 +27,9 @@ jobs:
       OCI_REGION: ${{ vars.OCI_REGION }}
       TF_STATE_BUCKET: ${{ vars.TF_STATE_BUCKET }}
       OCI_OBJECT_STORAGE_NAMESPACE: ${{ vars.OCI_OBJECT_STORAGE_NAMESPACE }}
+      # Exact state CMK OCID the bucket must be bound to; the scripts refuse to
+      # mutate unless the bucket preconditions verify against it.
+      TF_VALIDATION_EXPECTED_KMS_KEY_ID: ${{ vars.TF_VALIDATION_EXPECTED_KMS_KEY_ID }}
       RUN_ID: ${{ inputs.run_id }}
       # The CI identity is the RPST resource principal; API-key mode is the
       # operator-workstation path and stays documented in the approval package.

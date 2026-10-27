@@ -84,12 +84,11 @@ case "$VALIDATION_AUTH_MODE" in
 esac
 
 # Record whether the probe key exists before initialization; the post-check
-# proves the probe wrote nothing either way.
-existed_before=false
-if oci "${VALIDATION_OCI_ARGS[@]}" os object head \
-    --bucket-name "$VALIDATION_LIB_APPROVED_BUCKET" --name "$VALIDATION_STATE_KEY" >/dev/null 2>&1; then
-  existed_before=true
-fi
+# proves the probe wrote nothing either way. The underprivileged identity may
+# legitimately be denied listings, so this NEVER claims absence from a failed
+# call — an unverifiable status is carried through and reported.
+vf_probe_key_status "$VALIDATION_STATE_KEY"
+status_before="$VALIDATION_PROBE_STATUS"
 
 if "$VALIDATION_TERRAFORM" -chdir="$work_dir" init -input=false -backend-config=backend.hcl > "$work_dir/init.log" 2>&1; then
   echo "Expected the underprivileged identity to be denied state-bucket access." >&2
@@ -102,15 +101,15 @@ if ! grep -qiE 'denied|not authorized|unauthorized|forbidden|NotAuthenticated|No
   exit 1
 fi
 
-existed_after=false
-if oci "${VALIDATION_OCI_ARGS[@]}" os object head \
-    --bucket-name "$VALIDATION_LIB_APPROVED_BUCKET" --name "$VALIDATION_STATE_KEY" >/dev/null 2>&1; then
-  existed_after=true
-fi
-if [[ "$existed_before" != "$existed_after" ]]; then
-  echo "The probe reported a denial but the state key's presence changed; treat the identity as privileged and stop for review." >&2
+vf_probe_key_status "$VALIDATION_STATE_KEY"
+status_after="$VALIDATION_PROBE_STATUS"
+if [[ "$status_before" != "$status_after" ]]; then
+  echo "The probe reported a denial but the probe key's presence status changed ('${status_before}' → '${status_after}'); treat the identity as privileged and stop for review." >&2
   exit 1
+fi
+if [[ "$status_after" == "unverifiable" ]]; then
+  echo "Key presence could not be listed under the underprivileged identity (expected when listings are denied); no absence claim is made."
 fi
 
 echo "Underprivileged identity was denied access to the disposable Terraform state key; no object was written."
-echo "Validation state key probed (unchanged): $VALIDATION_STATE_KEY"
+echo "Validation state key probed (status '${status_after}', unchanged): $VALIDATION_STATE_KEY"

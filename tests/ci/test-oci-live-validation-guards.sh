@@ -3,8 +3,9 @@ set -euo pipefail
 
 # Offline regression suite for the hardened live OCI validation scripts.
 # Every live mutation path is exercised against stub `terraform` and `oci`
-# binaries that simulate lock objects, versioned objects, and work-request
-# behavior, so no network call and no real bucket is ever touched.
+# binaries that simulate lock objects, versioned objects, listings with
+# pagination, work-request behavior, and KMS metadata, so no network call and
+# no real bucket is ever touched.
 
 # shellcheck disable=SC2034  # MOCK_* variables are consumed by the stubs.
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -19,6 +20,8 @@ tmp="$(mktemp -d)"
 trap '[[ -n "${TEST_KEEP_TMP:-}" ]] || rm -rf "$tmp"' EXIT
 
 approved_bucket="eventforge-tfstate-prod"
+approved_namespace="axrq1dasyz3y"
+approved_kms="ocid1.key.oc1.ap-hyderabad-1.stubkms"
 run_id="validation-run-1"
 state_key="validation/live-acceptance-${run_id}/terraform.tfstate"
 lock_key="${state_key}.lock"
@@ -58,6 +61,9 @@ if [[ -n "$backend_cfg" ]]; then
   fi
 fi
 if [[ "$cmd" == "init" ]]; then
+  # Record how many oci calls happened before init so tests can assert that
+  # the preconditions and absence checks ran first.
+  wc -l < "${MOCK_OCI_LOG:?}" > "${MOCK_TF_CAPTURE_DIR:?}/oci-lines-before-init"
   if [[ -n "$backend_cfg" ]]; then
     cp "$backend_cfg" "${MOCK_TF_CAPTURE_DIR:?}/backend.hcl"
     key="$(sed -nE 's/^[[:space:]]*key[[:space:]]*=[[:space:]]*"([^"]+)".*/\1/p' "$backend_cfg")"
@@ -104,7 +110,9 @@ if [[ "$cmd" == "plan" ]]; then
     if [[ "${MOCK_PLAN_LOCK_ERROR:-1}" == "1" ]]; then
       echo "Error: Error acquiring the state lock. Lock Info: ID: stub-lock-id, Holder: state-lock probe"
     else
-      echo "Error: failed to read remote backend state: 500 InternalServerError"
+      # Deliberately mentions "lock" without being a state-lock error: the
+      # script's contention assertion must not produce a false PASS on it.
+      echo "Error: failed to read remote backend state: 500 InternalServerError while refreshing the backend lock metadata"
     fi
     exit 1
   fi
@@ -141,39 +149,104 @@ while (( $# )); do
   esac
 done
 set -- "${args[@]}"
-if [[ "${1:-} ${2:-}" != "os object" ]]; then
+bucket_dir="${MOCK_BUCKET_DIR:?}"
+name="" prefix="" src_vid="" dest_name="" vid_arg="" file_target=""
+
+parse_flags() {
+  while (( $# )); do
+    case "$1" in
+      --name) name="$2"; shift 2;;
+      --prefix) prefix="$2"; shift 2;;
+      --version-id) vid_arg="$2"; shift 2;;
+      --source-object-name) shift 2;;
+      --source-version-id) src_vid="$2"; shift 2;;
+      --destination-object-name) dest_name="$2"; shift 2;;
+      --file) file_target="$2"; shift 2;;
+      --all) shift;;
+      --bucket-name|--namespace-name|--source-bucket|--destination-bucket|--source-namespace|--destination-namespace|--destination-region|--destination-object-if-none-match-e-tag|--wait-interval-seconds|--wait-for-state|--key-id) shift 2;;
+      *) shift;;
+    esac
+  done
+}
+
+if [[ "${1:-}" == "os" && "${2:-}" == "ns" ]]; then
+  # oci os ns get
+  if [[ "${MOCK_NS_FAIL:-0}" == "1" ]]; then
+    echo "${MOCK_NS_FAIL_MSG:-ServiceError: NotAuthenticatedOrUnauthorized}" >&2
+    exit 1
+  fi
+  printf '"%s"\n' "${MOCK_NAMESPACE:?}"
+  exit 0
+fi
+if [[ "${1:-}" == "os" && "${2:-}" == "bucket" ]]; then
+  # oci os bucket get
+  parse_flags "${@:3}"
+  if [[ "${MOCK_BUCKET_FAIL:-0}" == "1" ]]; then
+    echo "${MOCK_BUCKET_FAIL_MSG:-ServiceError: NotAuthorizedOrNotFound}" >&2
+    exit 1
+  fi
+  cat "${MOCK_BUCKET_JSON:?}"
+  exit 0
+fi
+if [[ "${1:-}" == "kms" && "${2:-}" == "management" ]]; then
+  # oci kms management key get
+  parse_flags "${@:4}"
+  if [[ "${MOCK_KMS_FAIL:-0}" == "1" ]]; then
+    echo "${MOCK_KMS_FAIL_MSG:-ServiceError: NotAuthorizedOrNotFound}" >&2
+    exit 1
+  fi
+  cat "${MOCK_KMS_JSON:?}"
+  exit 0
+fi
+if [[ "${1:-}" != "os" || "${2:-}" != "object" ]]; then
   echo "stub oci: unexpected service: $*" >&2
   exit 64
 fi
 verb="$3"
 shift 3
-name="" src_vid="" dest_name="" vid_arg="" file_target=""
-while (( $# )); do
-  case "$1" in
-    --name) name="$2"; shift 2;;
-    --version-id) vid_arg="$2"; shift 2;;
-    --source-object-name) shift 2;;
-    --source-version-id) src_vid="$2"; shift 2;;
-    --destination-object-name) dest_name="$2"; shift 2;;
-    --file) file_target="$2"; shift 2;;
-    --bucket-name|--prefix|--source-bucket|--destination-bucket|--source-namespace|--destination-namespace|--destination-region|--wait-interval-seconds|--wait-for-state|--profile|--auth) shift 2;;
-    *) shift;;
-  esac
-done
-bucket_dir="${MOCK_BUCKET_DIR:?}"
+parse_flags "$@"
+
 if [[ "$verb" == "head" ]]; then
   if [[ -f "$bucket_dir/$name" ]]; then
     vid=""
     if [[ -f "$bucket_dir/$name.version" ]]; then
       vid="$(cat "$bucket_dir/$name.version")"
     fi
-    printf '{"version-id":"%s","kms-key-id":"ocid1.key.oc1..stub","content-type":"application/json"}\n' "$vid"
+    printf '{"version-id":"%s","kms-key-id":"%s","content-type":"application/json"}\n' "$vid" "${MOCK_HEAD_KMS:-ocid1.key.oc1.ap-hyderabad-1.stubkms}"
     exit 0
   fi
   echo "Object not found" >&2
   exit 1
 fi
+if [[ "$verb" == "list" ]]; then
+  if [[ "${MOCK_LIST_FAIL:-0}" == "1" ]]; then
+    echo "${MOCK_LIST_FAIL_MSG:-ServiceError: NotAuthorizedOrNotFound}" >&2
+    exit 1
+  fi
+  if [[ -n "${MOCK_LIST_JSON:-}" ]]; then
+    cat "$MOCK_LIST_JSON"
+    exit 0
+  fi
+  names=""
+  while IFS= read -r f; do
+    rel="${f#"$bucket_dir"/}"
+    case "$rel" in
+      *.version) continue;;
+      "$prefix"*) names="${names}${rel}"$'\n';;
+    esac
+  done < <(find "$bucket_dir" -type f | sort)
+  if [[ -n "$names" ]]; then
+    printf '%s' "$names" | jq -Rn --arg p "$prefix" '{data:[inputs|select(startswith($p))|{name:.,size:0,etag:"stub"}],prefixes:[]}'
+  else
+    printf '{"data":[],"prefixes":[]}\n'
+  fi
+  exit 0
+fi
 if [[ "$verb" == "list-object-versions" ]]; then
+  if [[ "${MOCK_VERSIONS_FAIL:-0}" == "1" ]]; then
+    echo "${MOCK_VERSIONS_FAIL_MSG:-ServiceError: InternalServerError while paginating versions}" >&2
+    exit 1
+  fi
   if [[ -n "${MOCK_VERSIONS_JSON:-}" && -f "$MOCK_VERSIONS_JSON" ]]; then
     cat "$MOCK_VERSIONS_JSON"
   else
@@ -186,9 +259,18 @@ if [[ "$verb" == "copy" ]]; then
     echo "WorkRequest state: FAILED" >&2
     exit 1
   fi
+  dest="$bucket_dir/$dest_name"
+  mkdir -p "$(dirname "$dest")"
+  if [[ "${MOCK_COPY_RACE:-0}" == "1" ]]; then
+    printf 'concurrent writer got here first' > "$dest"
+  fi
+  # The real service rejects a copy carrying --destination-object-if-none-match-e-tag '*'
+  # when the destination already exists.
+  if [[ "${MOCK_COPY_PRECONDITION:-0}" == "1" || -f "$dest" ]]; then
+    echo "WorkRequest state: FAILED; PreconditionFailed: destination object already exists" >&2
+    exit 1
+  fi
   if [[ "${MOCK_COPY_INCOMPLETE:-0}" != "1" ]]; then
-    dest="$bucket_dir/$dest_name"
-    mkdir -p "$(dirname "$dest")"
     if [[ -n "${MOCK_COPY_CONTENT:-}" && -f "$MOCK_COPY_CONTENT" ]]; then
       cp "$MOCK_COPY_CONTENT" "$dest"
     elif [[ -n "$src_vid" && -f "${MOCK_VERSIONS_DIR:?}/$src_vid" ]]; then
@@ -229,11 +311,16 @@ setup_case() {
   : > "$cdir/tf-calls.log"
   : > "$cdir/oci-calls.log"
   printf '0' > "$cdir/plan-count"
+  jq -n --arg kms "$approved_kms" \
+    '{data:{"public-access-type":"NoPublicAccess","versioning":"Enabled","kms-key-id":$kms}}' \
+    > "$cdir/bucket.json"
+  jq -n --arg kms "$approved_kms" '{id:$kms,"lifecycle-state":"ENABLED"}' > "$cdir/kms.json"
   base_vars=(
     "RUN_ID=$run_id"
     "TF_STATE_BUCKET=$approved_bucket"
-    "OCI_OBJECT_STORAGE_NAMESPACE=axrq1dasyz3y"
+    "OCI_OBJECT_STORAGE_NAMESPACE=$approved_namespace"
     "OCI_REGION=ap-hyderabad-1"
+    "TF_VALIDATION_EXPECTED_KMS_KEY_ID=$approved_kms"
     "TERRAFORM_BIN=$stub_dir/terraform"
     "TF_OCI_AUTH=APIKey"
     "TF_OCI_PROFILE=operator"
@@ -247,7 +334,20 @@ setup_case() {
     "MOCK_VERSIONS_JSON=$cdir/versions.json"
     "MOCK_VERSIONS_DIR=$cdir/version-content"
     "MOCK_APPLY_PID_FILE=$cdir/apply.pid"
+    "MOCK_NAMESPACE=$approved_namespace"
+    "MOCK_BUCKET_JSON=$cdir/bucket.json"
+    "MOCK_KMS_JSON=$cdir/kms.json"
   )
+}
+
+set_bucket_field() {
+  jq --arg k "$1" --arg v "$2" '.data[$k]=$v' "$cdir/bucket.json" > "$cdir/bucket.json.new" \
+    && mv "$cdir/bucket.json.new" "$cdir/bucket.json"
+}
+
+set_kms_state() {
+  jq --arg s "$1" '."lifecycle-state"=$s' "$cdir/kms.json" > "$cdir/kms.json.new" \
+    && mv "$cdir/kms.json.new" "$cdir/kms.json"
 }
 
 # Runs the given script in a hermetic environment: only PATH plus the base and
@@ -292,11 +392,6 @@ expect_evidence() {
 
 die() { echo "FAIL: $*" >&2; exit 1; }
 
-seed_obj() {
-  mkdir -p "$(dirname "$cdir/bucket/$1")"
-  : > "$cdir/bucket/$1"
-}
-
 make_state() {
   jq -nc --arg lineage "$1" --argjson serial "$2" \
     '{version:4,terraform_version:"1.12.2",serial:$serial,lineage:$lineage,outputs:{},resources:[{mode:"managed",type:"terraform_data",name:"lock_probe",instances:[{schema_version:0,attributes:{id:"stub"}}]}]}'
@@ -314,17 +409,39 @@ make_versions_fixture() {
   }'
 }
 
+# Version fixtures for the ABSENCE checks: a reused key whose current object
+# is gone but whose history remains.
+make_prev_versions_only_fixture() {
+  jq -nc --arg key "$state_key" '{
+    data: [
+      {name:$key, size:80, etag:"e-old", "time-created":"2026-10-27T10:01:00Z", "time-modified":"2026-10-27T10:01:00Z", "version-id":"v-old", "is-delete-marker":false, "storage-tier":"Standard", "archival-state":null}
+    ],
+    prefixes: []
+  }'
+}
+
+make_delete_marker_only_fixture() {
+  jq -nc --arg key "$state_key" '{
+    data: [
+      {name:$key, size:0, etag:"", "time-created":"2026-10-27T10:02:00Z", "time-modified":"2026-10-27T10:02:00Z", "version-id":"v-marker", "is-delete-marker":true, "storage-tier":"Standard", "archival-state":null}
+    ],
+    prefixes: []
+  }'
+}
+
 seed_recovery_fixtures() {
   make_state lin-recovery 11 > "$cdir/version-content/v-oldest"
   make_state lin-recovery 12 > "$cdir/version-content/v-old"
   make_state lin-recovery 13 > "$cdir/version-content/v-cur"
   make_versions_fixture > "$cdir/versions.json"
-  seed_obj "$state_key"
+  mkdir -p "$cdir/bucket/$(dirname "$state_key")"
+  : > "$cdir/bucket/$state_key"
   printf 'v-cur' > "$cdir/bucket/$state_key.version"
 }
 
 # ===================================================================== verify
-# Happy path (APIKey): full lock/contention/release cycle on the derived key.
+# Happy path (APIKey): preconditions, absence proofs, then the full
+# lock/contention/release cycle on the derived key.
 setup_case verify-happy
 make_state lin-verify 7 > "$cdir/state.json"
 run_case main "$verify_script"
@@ -335,12 +452,23 @@ grep -q 'auth                = "APIKey"' "$cdir/captured/backend.hcl" || die "ba
 grep -q 'config_file_profile = "operator"' "$cdir/captured/backend.hcl" || die "backend must select the explicit profile"
 grep -q "key       = \"$state_key\"" "$cdir/captured/backend.hcl" || die "backend must use the RUN_ID-derived key"
 grep -q -- "--auth api_key --profile operator" "$cdir/oci-calls.log" || die "oci calls must carry the selected auth"
-first_oci="$(sed -n '1p' "$cdir/oci-calls.log")"
-second_oci="$(sed -n '2p' "$cdir/oci-calls.log")"
-grep -q -- "--name $state_key" <<<"$first_oci" || die "first remote call must verify the state key is absent"
-grep -q -- "--name $lock_key" <<<"$second_oci" || die "second remote call must verify the lock key is absent"
-if grep -qE "os object (delete|copy|put|bulk-delete)" "$cdir/oci-calls.log"; then
-  die "validation script must never issue object deletes/copies/puts itself"
+# Preconditions ran, and every absence proof used successful, fully paginated
+# listings of both keys before anything was written.
+grep -q "os ns get" "$cdir/oci-calls.log" || die "authenticated namespace must be verified"
+grep -q "os bucket get" "$cdir/oci-calls.log" || die "bucket encryption preconditions must be verified"
+grep -q "kms management key get" "$cdir/oci-calls.log" || die "CMK liveness must be verified"
+for k in "$state_key" "$lock_key"; do
+  grep -qF "os object list --bucket-name $approved_bucket --prefix $k --all" "$cdir/oci-calls.log" \
+    || die "exact-key object listing with --all required for $k"
+  grep -qF "os object list-object-versions --bucket-name $approved_bucket --prefix $k --all" "$cdir/oci-calls.log" \
+    || die "exact-key version listing with --all required for $k"
+done
+before_init="$(cat "$cdir/captured/oci-lines-before-init")"
+if (( before_init < 7 )); then
+  die "preconditions and absence listings must complete before terraform init (got $before_init calls)"
+fi
+if grep -qE "os object (delete|put|bulk-delete)" "$cdir/oci-calls.log"; then
+  die "validation script must never issue object deletes/puts itself"
 fi
 if [[ -n "$(find "$cdir/evidence" -mindepth 1 -print -quit)" ]]; then
   die "successful run must not preserve evidence"
@@ -398,14 +526,87 @@ setup_case guard-key-mismatch
 run_case main "$verify_script" TF_BACKEND_VALIDATION_KEY="validation/live-acceptance-$run_id/other.tfstate"
 expect_fail main
 
-# Reused validation key or surviving lock key refuse before any mutation.
+# Bucket encryption/visibility preconditions (read-only, before mutation).
+setup_case guard-bucket-public
+set_bucket_field "public-access-type" "ObjectReadWithoutList"
+run_case main "$verify_script"
+expect_fail main
+grep -qi "does not satisfy the approved preconditions" "$cdir/main.err" || die "public bucket must be refused"
+setup_case guard-bucket-unversioned
+set_bucket_field "versioning" ""
+run_case main "$verify_script"
+expect_fail main
+setup_case guard-bucket-wrong-cmk
+set_bucket_field "kms-key-id" "ocid1.key.oc1.ap-hyderabad-1.notthekey"
+run_case main "$verify_script"
+expect_fail main
+setup_case guard-bucket-get-failed
+run_case main "$verify_script" MOCK_BUCKET_FAIL=1 MOCK_BUCKET_FAIL_MSG="ServiceError: NotAuthorizedOrNotFound"
+expect_fail main
+grep -qi "aborting without any mutation" "$cdir/main.err" || die "failed bucket read must abort without mutation"
+setup_case guard-kms-disabled
+set_kms_state "DISABLED"
+run_case main "$verify_script"
+expect_fail main
+grep -qi "not ENABLED" "$cdir/main.err" || die "disabled CMK must abort"
+setup_case guard-kms-env-missing
+run_case main "$verify_script" TF_VALIDATION_EXPECTED_KMS_KEY_ID=
+expect_fail main
+grep -qi "TF_VALIDATION_EXPECTED_KMS_KEY_ID is required" "$cdir/main.err" || die "missing expected-CMK constant must abort"
+setup_case guard-ns-mismatch
+run_case main "$verify_script" MOCK_NAMESPACE=other-namespace
+expect_fail main
+grep -qi "is not the approved" "$cdir/main.err" || die "namespace mismatch must abort"
+setup_case guard-bucket-malformed
+printf '%s' '{"data":{"oops":true}}' > "$cdir/bucket.json"
+run_case main "$verify_script"
+expect_fail main
+grep -qi "malformed" "$cdir/main.err" || die "malformed bucket response must abort"
+
+# Absence checks: a failed or unverifiable listing is never absence.
+setup_case absence-list-403
+run_case main "$verify_script" MOCK_LIST_FAIL=1 MOCK_LIST_FAIL_MSG="ServiceError: NotAuthorizedOrNotFound (403)"
+expect_fail main
+grep -qi "never treated as absence" "$cdir/main.err" || die "403 listing must not be treated as absence"
+setup_case absence-list-500
+run_case main "$verify_script" MOCK_LIST_FAIL=1 MOCK_LIST_FAIL_MSG="ServiceError: InternalServerError (500)"
+expect_fail main
+grep -qi "never treated as absence" "$cdir/main.err" || die "500 listing must not be treated as absence"
+setup_case absence-versions-failed
+run_case main "$verify_script" MOCK_VERSIONS_FAIL=1 MOCK_VERSIONS_FAIL_MSG="ServiceError: InternalServerError while paginating versions"
+expect_fail main
+grep -qi "never treated as absence" "$cdir/main.err" || die "failed version listing must abort"
+setup_case absence-list-malformed
+printf '%s' '{"nope":true}' > "$cdir/list.json"
+run_case main "$verify_script" MOCK_LIST_JSON="$cdir/list.json"
+expect_fail main
+grep -qi "malformed object-listing response" "$cdir/main.err" || die "malformed listing must abort"
+setup_case absence-versions-malformed
+printf '%s' '{"oops":1}' > "$cdir/versions.json"
+run_case main "$verify_script"
+expect_fail main
+grep -qi "malformed" "$cdir/main.err" || die "malformed version response must abort"
+
+# A reused key counts even when only its history remains.
+setup_case absence-previous-versions
+make_prev_versions_only_fixture > "$cdir/versions.json"
+run_case main "$verify_script"
+expect_fail main
+grep -qi "historical versions or a delete marker" "$cdir/main.err" || die "previous-version reuse must be refused"
+setup_case absence-delete-marker
+make_delete_marker_only_fixture > "$cdir/versions.json"
+run_case main "$verify_script"
+expect_fail main
+grep -qi "historical versions or a delete marker" "$cdir/main.err" || die "delete-marker reuse must be refused"
 setup_case guard-reused-key
-seed_obj "$state_key"
+mkdir -p "$(dirname "$cdir/bucket/$state_key")"
+: > "$cdir/bucket/$state_key"
 run_case main "$verify_script"
 expect_fail main
 grep -qi "already exists" "$cdir/main.err" || die "reused-key refusal expected"
 setup_case guard-lock-present
-seed_obj "$lock_key"
+mkdir -p "$(dirname "$cdir/bucket/$lock_key")"
+: > "$cdir/bucket/$lock_key"
 run_case main "$verify_script"
 expect_fail main
 grep -qi "already exists" "$cdir/main.err" || die "surviving-lock refusal expected"
@@ -450,17 +651,22 @@ expect_fail main
 expect_evidence
 grep -qi "failed before lock contention" "$cdir/main.err" || grep -qi "failed after the contention check" "$cdir/main.err" || die "background apply failure must be reported"
 
-# Lock contention must fail the concurrent plan, and only for lock reasons.
+# Lock contention must fail the concurrent plan, and the failure must be a
+# REAL state-lock error — an unrelated message that merely contains "lock"
+# must not produce a false PASS.
 setup_case fail-plan-succeeded
 run_case main "$verify_script" MOCK_PLAN_HOLD_RESULT=success
 expect_fail main
 expect_evidence
 grep -qi "expected concurrent terraform plan to fail" "$cdir/main.err" || die "unexpected plan success must be reported"
-setup_case fail-plan-not-lock
+setup_case fail-plan-lock-word-only
 run_case main "$verify_script" MOCK_PLAN_LOCK_ERROR=0
 expect_fail main
 expect_evidence
 grep -qi "other than state locking" "$cdir/main.err" || die "non-lock plan failure must be reported"
+if grep -qi "OCI backend initialization, remote read/write" "$cdir/main.out"; then
+  die "a plan error that merely mentions 'lock' must not pass the contention gate"
+fi
 
 # Destroy failure and post-destroy lock failure preserve evidence and demand a
 # separately approved lock deletion.
@@ -559,7 +765,16 @@ expect_evidence
 setup_case denied-unexpected-write
 run_case main "$denied_script" TF_OCI_PROFILE=denied-probe MOCK_INIT_FAIL=1 MOCK_INIT_WRITES=1
 expect_fail main
-grep -qi "presence changed" "$cdir/main.err" || die "an object appearing despite denial must stop the probe"
+grep -qi "presence status changed" "$cdir/main.err" || die "an object appearing despite denial must stop the probe"
+
+setup_case denied-listing-denied-unverifiable
+run_case main "$denied_script" TF_OCI_PROFILE=denied-probe MOCK_INIT_FAIL=1 MOCK_LIST_FAIL=1 \
+  MOCK_LIST_FAIL_MSG="ServiceError: NotAuthorizedOrNotFound"
+expect_ok main
+grep -qi "no absence claim is made" "$cdir/main.out" || die "denied listings must never yield an absence claim"
+if grep -qi "status 'present'" "$cdir/main.out"; then
+  die "unverifiable presence must not be reported as present"
+fi
 
 setup_case denied-rp-mode
 run_case main "$denied_script" TF_OCI_AUTH=ResourcePrincipal OCI_RESOURCE_PRINCIPAL_VERSION=2.2 MOCK_INIT_FAIL=1
@@ -572,16 +787,20 @@ seed_recovery_fixtures
 make_state lin-recovery 11 > "$cdir/state.json"
 run_case main "$recovery_script"
 expect_ok main
-grep -q "os object list-object-versions" "$cdir/oci-calls.log" || die "recovery must use the supported list-object-versions command"
+grep -qF "os object list-object-versions --bucket-name $approved_bucket --prefix $state_key --all" "$cdir/oci-calls.log" \
+  || die "recovery must use the supported list-object-versions command with --all"
 if grep -qE "os object list-versions " "$cdir/oci-calls.log"; then
   die "recovery must not use the unsupported list-versions command"
 fi
 copy_line="$(grep "os object copy" "$cdir/oci-calls.log")"
 grep -q -- "--source-version-id v-oldest" <<<"$copy_line" || die "oldest noncurrent version must be selected"
 grep -q -- "--wait-for-state COMPLETED" <<<"$copy_line" || die "copy must wait for async completion"
+grep -q -- "--destination-object-if-none-match-e-tag" <<<"$copy_line" || die "copy must carry the conditional none-match header"
 grep -q -- "--destination-object-name $restore_key" <<<"$copy_line" || die "copy must target the restore-test prefix"
 grep -q -- "--destination-region ap-hyderabad-1" <<<"$copy_line" || die "copy must pin the approved destination region"
 grep -q "Restored $state_key version v-oldest to $restore_key" "$cdir/main.out" || die "restored pair must be reported"
+grep -qi "byte-identical to the selected source-version snapshot" "$cdir/main.out" || die "full-snapshot verification must be reported"
+grep -q "os ns get" "$cdir/oci-calls.log" || die "recovery must verify bucket preconditions too"
 
 setup_case recovery-explicit-version
 seed_recovery_fixtures
@@ -593,14 +812,16 @@ grep -q -- "--source-version-id v-old" <<<"$copy_line" || die "explicit version 
 
 setup_case recovery-destination-present
 seed_recovery_fixtures
-seed_obj "$restore_key"
+mkdir -p "$(dirname "$cdir/bucket/$restore_key")"
+: > "$cdir/bucket/$restore_key"
 run_case main "$recovery_script"
 expect_fail main
 grep -qi "already exists" "$cdir/main.err" || die "occupied restore-test key must be refused"
 
 setup_case recovery-no-noncurrent
 jq -nc --arg key "$state_key" '{data:[{name:$key, size:1, etag:"e", "time-created":"2026-10-27T10:05:00Z", "time-modified":"2026-10-27T10:05:00Z", "version-id":"v-cur", "is-delete-marker":false, "storage-tier":"Standard", "archival-state":null}], prefixes:[]}' > "$cdir/versions.json"
-seed_obj "$state_key"
+mkdir -p "$cdir/bucket/$(dirname "$state_key")"
+: > "$cdir/bucket/$state_key"
 printf 'v-cur' > "$cdir/bucket/$state_key.version"
 run_case main "$recovery_script"
 expect_fail main
@@ -616,12 +837,45 @@ setup_case recovery-production-source
 run_case main "$recovery_script" TF_RESTORE_SOURCE_KEY=bootstrap/terraform.tfstate
 expect_fail main
 
+setup_case recovery-versions-listing-failed
+seed_recovery_fixtures
+run_case main "$recovery_script" MOCK_VERSIONS_FAIL=1
+expect_fail main
+grep -qi "unverifiable history" "$cdir/main.err" || die "failed version listing must never select a snapshot"
+
+setup_case recovery-malformed-versions
+seed_recovery_fixtures
+printf '%s' '{"data":"not-an-array"}' > "$cdir/versions.json"
+run_case main "$recovery_script"
+expect_fail main
+grep -qi "malformed object-version response" "$cdir/main.err" || die "malformed version response must abort"
+
 setup_case recovery-copy-failed
 seed_recovery_fixtures
 run_case main "$recovery_script" MOCK_COPY_FAIL=1
 expect_fail main
 expect_evidence copy.log
 grep -qi "did not complete successfully" "$cdir/main.err" || die "failed async copy must be reported"
+
+# A concurrent writer creating the destination between the absence check and
+# the copy is caught by the conditional copy header.
+setup_case recovery-race-destination
+seed_recovery_fixtures
+make_state lin-recovery 11 > "$cdir/state.json"
+run_case main "$recovery_script" MOCK_COPY_RACE=1
+expect_fail main
+expect_evidence copy.log
+grep -qi "did not complete successfully" "$cdir/main.err" || die "raced destination creation must abort the copy"
+if [[ ! -f "$cdir/bucket/$restore_key" ]]; then
+  die "the stub race should have created the destination first"
+fi
+
+setup_case recovery-precondition-rejected
+seed_recovery_fixtures
+run_case main "$recovery_script" MOCK_COPY_PRECONDITION=1
+expect_fail main
+expect_evidence copy.log
+grep -qi "precondition rejection" "$cdir/main.err" || die "conditional-copy rejection must be reported"
 
 setup_case recovery-copy-incomplete
 seed_recovery_fixtures
@@ -636,12 +890,13 @@ make_state lin-recovery 11 > "$cdir/version-content/v-oldest"
 make_state lin-recovery 12 > "$cdir/version-content/v-old"
 make_state lin-recovery 13 > "$cdir/version-content/v-cur"
 make_versions_fixture > "$cdir/versions.json"
-seed_obj "$state_key"
+mkdir -p "$cdir/bucket/$(dirname "$state_key")"
+: > "$cdir/bucket/$state_key"
 printf 'v-cur' > "$cdir/bucket/$state_key.version"
 make_state other-lineage 99 > "$cdir/wrong.json"
 run_case main "$recovery_script" MOCK_COPY_CONTENT="$cdir/wrong.json"
 expect_fail main
-grep -qi "mismatch" "$cdir/main.err" || die "restored snapshot mismatch must be reported"
+grep -qi "differs from the complete selected source-version snapshot" "$cdir/main.err" || die "restored snapshot mismatch must be reported"
 expect_evidence copy.log
 
 echo "OCI live-validation guard fixtures passed"

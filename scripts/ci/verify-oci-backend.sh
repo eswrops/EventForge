@@ -21,8 +21,13 @@ vf_require_approved_backend
 vf_require_terraform
 vf_require_auth
 
+# Read-only bucket encryption/visibility preconditions must hold before any
+# mutation: approved namespace, NoPublicAccess, versioning Enabled, the exact
+# expected CMK bound and still ENABLED.
+vf_require_bucket_preconditions
+
 # Nothing may be written before the exact destination key and its lock key are
-# proven absent.
+# proven absent by successful, fully-paginated listings.
 vf_require_key_absent "Destination state key" "$VALIDATION_STATE_KEY"
 vf_require_key_absent "Destination lock key" "$VALIDATION_LOCK_KEY"
 
@@ -159,8 +164,8 @@ if "$VALIDATION_TERRAFORM" -chdir="$work_dir" plan -input=false -lock-timeout=1s
   echo "Expected concurrent Terraform plan to fail while the backend lock was held." >&2
   exit 1
 fi
-if ! grep -qi 'lock' "$work_dir/second-plan.log"; then
-  echo "Concurrent Terraform plan failed for a reason other than state locking." >&2
+if ! grep -qi 'error acquiring the state lock' "$work_dir/second-plan.log"; then
+  echo "Concurrent Terraform plan failed for a reason other than state locking (a generic message mentioning 'lock' is not a lock error)." >&2
   sed -n '1,120p' "$work_dir/second-plan.log" >&2
   exit 1
 fi
