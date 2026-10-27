@@ -31,7 +31,9 @@ before running anything and transcribes the merge commit into the §12 record.
   pagination, and KMS key lookup through the vault's actual management
   endpoint (see §8) — with the offline fixtures rewritten to the live-verified
   envelopes.
-- Copy contract fix 1: the focused PR that replaced the recovery script's
+- Copy contract fix 1: PR #28 (squash-merged as
+  `8d424114e15f361a1357765f0e151ec0c0c55e34`) — the focused PR that replaced
+  the recovery script's
   invalid `os object copy --source-bucket <bucket>` option with the
   command group's required `--bucket-name <bucket>` option. Root cause
   observed live 2026-10-27 during the first execution: OCI CLI 3.95.1 has no
@@ -43,9 +45,9 @@ before running anything and transcribes the merge commit into the §12 record.
   `--destination-*`, `--destination-object-if-none-match-e-tag`,
   `--wait-for-state` all present) is now asserted by the offline fixtures,
   which reject any `--source-bucket` occurrence.
-- Merge commit: stamped after the copy contract fix merges (previous stamp:
-  `2e2380a33b18515ad0a52e24d027d58702b06fac`,
-  verify: `git log --format='%H %s' -1 2e2380a`)
+- Merge commit: `8d424114e15f361a1357765f0e151ec0c0c55e34`
+  (verify: `git log --format='%H %s' -1 8d42411`; previous stamp:
+  `2e2380a33b18515ad0a52e24d027d58702b06fac`)
 - Content hashes (sha256), verified before execution:
 
 | File | sha256 |
