@@ -47,10 +47,11 @@ make_jwt() {
 }
 
 future_exp="$(( $(date +%s) + 3600 ))"
-valid_claims="$(jq -nc --argjson exp "$future_exp" '{iss:"https://token.actions.githubusercontent.com",aud:"github-actions",repository:"acme/eventforge",environment:"production-plan",sub:"repo:acme/eventforge:environment:production-plan",exp:$exp}')"
+# Immutable subject for the fixture tenant: repo:acme@555/eventforge@777:environment:production-plan
+valid_claims="$(jq -nc --argjson exp "$future_exp" '{iss:"https://token.actions.githubusercontent.com",aud:"github-actions",repository:"acme/eventforge",repository_id:777,repository_owner_id:555,environment:"production-plan",sub:"repo:acme@555/eventforge@777:environment:production-plan",exp:$exp}')"
 valid_jwt="$(make_jwt "$valid_claims")"
 valid_rpst="$(make_jwt "$(jq -nc --argjson exp "$future_exp" '{exp:$exp}')")"
-config='{"token_exchange_domain_url":"https://identity.example.test","token_exchange_client_id":"client","token_exchange_client_secret":"secret","token_exchange_resource_type":"githubactions","audience":"github-actions","repository":"acme/eventforge","environment":"production-plan"}'
+config='{"token_exchange_domain_url":"https://identity.example.test","token_exchange_client_id":"client","token_exchange_client_secret":"secret","token_exchange_resource_type":"githubactions","audience":"github-actions","repository":"acme/eventforge","repository_owner_id":"555","repository_id":"777","environment":"production-plan"}'
 env_file="$temp_dir/github-env"
 PATH="$temp_dir/bin:$PATH" \
 MOCK_CURL_COUNTER="$temp_dir/curl-count" \
@@ -103,9 +104,15 @@ run_helper() {
 }
 
 TEST_CONFIG='{}' expect_failure 'missing configuration fields' run_helper
-TEST_JWT="$(make_jwt "$(jq -nc --argjson exp "$future_exp" '{iss:"https://token.actions.githubusercontent.com",aud:"github-actions",repository:"other/repo",environment:"production-plan",sub:"repo:other/repo:environment:production-plan",exp:$exp}')")" expect_failure 'unexpected repository claim' run_helper
-TEST_JWT="$(make_jwt "$(jq -nc --argjson exp "$future_exp" '{iss:"https://token.actions.githubusercontent.com",aud:"github-actions",repository:"acme/eventforge",environment:"production",sub:"repo:acme/eventforge:environment:production",exp:$exp}')")" expect_failure 'unexpected environment claim' run_helper
-TEST_JWT="$(make_jwt "$(jq -nc --argjson exp "$((future_exp - 7200))" '{iss:"https://token.actions.githubusercontent.com",aud:"github-actions",repository:"acme/eventforge",environment:"production-plan",sub:"repo:acme/eventforge:environment:production-plan",exp:$exp}')")" expect_failure 'expired GitHub credential' run_helper
+TEST_CONFIG="$(jq -c 'del(."repository_owner_id")' <<<"$config")" expect_failure 'missing repository_owner_id' run_helper
+TEST_CONFIG="$(jq -c '."repository_id" = "not-a-number"' <<<"$config")" expect_failure 'non-numeric repository_id' run_helper
+TEST_JWT="$(make_jwt "$(jq -nc --argjson exp "$future_exp" '{iss:"https://token.actions.githubusercontent.com",aud:"github-actions",repository:"other/repo",repository_id:777,repository_owner_id:555,environment:"production-plan",sub:"repo:other@555/repo@777:environment:production-plan",exp:$exp}')")" expect_failure 'unexpected repository claim' run_helper
+TEST_JWT="$(make_jwt "$(jq -c '."repository_id" = 999' <<<"$valid_claims")")" expect_failure 'unexpected repository id claim' run_helper
+TEST_JWT="$(make_jwt "$(jq -c '."repository_owner_id" = 999' <<<"$valid_claims")")" expect_failure 'unexpected repository owner id claim' run_helper
+TEST_JWT="$(make_jwt "$(jq -c '."sub" = "repo:acme/eventforge:environment:production-plan"' <<<"$valid_claims")")" expect_failure 'legacy name-only subject' run_helper
+TEST_JWT="$(make_jwt "$(jq -c '."sub" = "repo:acme@555/eventforge@999:environment:production-plan"' <<<"$valid_claims")")" expect_failure 'wrong repository id inside subject' run_helper
+TEST_JWT="$(make_jwt "$(jq -nc --argjson exp "$future_exp" '{iss:"https://token.actions.githubusercontent.com",aud:"github-actions",repository:"acme/eventforge",repository_id:777,repository_owner_id:555,environment:"production",sub:"repo:acme@555/eventforge@777:environment:production",exp:$exp}')")" expect_failure 'unexpected environment claim' run_helper
+TEST_JWT="$(make_jwt "$(jq -nc --argjson exp "$((future_exp - 7200))" '{iss:"https://token.actions.githubusercontent.com",aud:"github-actions",repository:"acme/eventforge",repository_id:777,repository_owner_id:555,environment:"production-plan",sub:"repo:acme@555/eventforge@777:environment:production-plan",exp:$exp}')")" expect_failure 'expired GitHub credential' run_helper
 TEST_EXCHANGE_FAIL=true expect_failure 'failed RPST exchange' run_helper
 TEST_RPST="$(make_jwt "$(jq -nc --argjson exp "$((future_exp - 7200))" '{exp:$exp}')")" expect_failure 'expired RPST' run_helper
 

@@ -23,13 +23,24 @@ For each protected GitHub environment, set `OCI_WIF_CONFIG_JSON` to a secret JSO
   "token_exchange_resource_type": "githubactions",
   "audience": "github-actions",
   "repository": "github_owner/github_repository",
+  "repository_owner_id": "237514587",
+  "repository_id": "1434990962",
   "environment": "production-plan",
   "issuer": "https://token.actions.githubusercontent.com",
   "token_exchange_rpst_exp": "60"
 }
 ```
 
-The helper obtains a GitHub JWT, verifies its issuer, audience, repository, environment subject, and expiry, then creates a one-run RSA key and exchanges the JWT for an RPST. It rejects malformed or expired RPSTs and exports only temporary `OCI_RESOURCE_PRINCIPAL_*` file paths. The public key submitted to OCI is derived from the same ephemeral private PEM passed to the Resource Principal SDK. Both the OCI provider and the Terraform backend authenticate as `ResourcePrincipal`; no OCI API key belongs in GitHub. Use a separate JSON secret for `production`, with `environment` set to `production`. Any unusually long job must re-exchange immediately before its Terraform operation rather than relying on an expired token.
+The helper obtains a GitHub JWT, verifies its issuer, audience, repository, **numeric repository
+and owner IDs**, the immutable subject
+`repo:<owner>@<owner_id>/<repo>@<repo_id>:environment:<environment>`, and expiry, then creates a
+one-run RSA key and exchanges the JWT for an RPST. Legacy name-only subjects are rejected. It
+rejects malformed or expired RPSTs and exports only temporary `OCI_RESOURCE_PRINCIPAL_*` file
+paths. The public key submitted to OCI is derived from the same ephemeral private PEM passed to
+the Resource Principal SDK. Both the OCI provider and the Terraform backend authenticate as
+`ResourcePrincipal`; no OCI API key belongs in GitHub. Use a separate JSON secret for `production`,
+with `environment` set to `production` and the same numeric IDs. Any unusually long job must
+re-exchange immediately before its Terraform operation rather than relying on an expired token.
 
 Configure the `production-plan` trust for `repo:<github_owner>/<github_repository>:environment:production-plan` and the `production` trust for the equivalent `production` subject. Validate issuer, audience, repository subject, and any supported immutable repository claim. Store a read-only Cloudflare API token as `CLOUDFLARE_API_TOKEN` in `production-plan` and the scoped write token under the same name in `production`.
 

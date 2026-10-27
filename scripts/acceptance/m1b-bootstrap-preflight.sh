@@ -1,36 +1,63 @@
 #!/usr/bin/env bash
-# M1B.1 bootstrap preflight. Read-only by default: this script never creates,
+# M1B bootstrap preflight. Read-only by default: this script never creates,
 # mutates, or deletes any GitHub or OCI resource, never installs credentials,
 # and never runs terraform plan/apply/init-with-backend. It validates the
 # preconditions for the first controlled OCI bootstrap and reports each check
 # as PASS / FAIL / NOT_RUN / BLOCKED.
 #
-# usage: m1b-bootstrap-preflight.sh [--skip-github] [--skip-oci] [--json <path>]
+# Modes (cumulative expectations, never mutating):
+#   pre-bootstrap (default) — pristine tenancy: no buckets, vault/CMK inputs
+#                             verifiable before the apply.
+#   post-bootstrap          — the authorized state and backup buckets must
+#                             exist; versioning and CMK encryption are
+#                             validated live. Legitimate bucket creation is
+#                             the expectation, never drift.
+#   pre-import              — post-bootstrap plus import-template checks:
+#                             only reviewed mapped resources, prevent_destroy
+#                             required, shared network components untouched.
+#
+# usage: m1b-bootstrap-preflight.sh [--mode pre-bootstrap|post-bootstrap|pre-import]
+#                                   [--skip-github] [--skip-oci] [--json <path>]
 set -uo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+mode="pre-bootstrap"
 skip_github=false
 skip_oci=false
 json_path=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --mode)
+      [[ $# -ge 2 ]] || { echo "usage: $0 [--mode pre-bootstrap|post-bootstrap|pre-import] [--skip-github] [--skip-oci] [--json <path>]" >&2; exit 64; }
+      case "$2" in pre-bootstrap|post-bootstrap|pre-import) mode="$2" ;; *) echo "unknown mode '$2'" >&2; exit 64 ;; esac
+      shift
+      ;;
     --skip-github) skip_github=true ;;
     --skip-oci) skip_oci=true ;;
     --json)
-      [[ $# -ge 2 ]] || { echo "usage: $0 [--skip-github] [--skip-oci] [--json <path>]" >&2; exit 64; }
+      [[ $# -ge 2 ]] || { echo "usage: $0 [--mode pre-bootstrap|post-bootstrap|pre-import] [--skip-github] [--skip-oci] [--json <path>]" >&2; exit 64; }
       json_path="$2"; shift
       ;;
-    *) echo "usage: $0 [--skip-github] [--skip-oci] [--json <path>]" >&2; exit 64 ;;
+    *) echo "usage: $0 [--mode pre-bootstrap|post-bootstrap|pre-import] [--skip-github] [--skip-oci] [--json <path>]" >&2; exit 64 ;;
   esac
   shift
 done
 
 # Expected immutable GitHub identity (numeric REST ids, not GraphQL node ids),
-# verified against the live API during M1B.1 preparation.
+# verified against the live API during M1B.1 and re-verified during M1B.1.1.
 expected_repo_id="${EXPECTED_REPO_ID:-1434990962}"
 expected_owner_id="${EXPECTED_OWNER_ID:-237514587}"
 expected_owner="${EXPECTED_OWNER:-eswrops}"
 expected_repo="${EXPECTED_REPO:-EventForge}"
+expected_reviewer_ids="${EXPECTED_REVIEWER_IDS:-237514587}"
+expected_state_bucket="${EXPECTED_STATE_BUCKET:-eventforge-tfstate-prod}"
+expected_backup_bucket="${EXPECTED_BACKUP_BUCKET:-eventforge-backups}"
+expected_ci_contexts=(
+  "Format and validate (infra/bootstrap)"
+  "Format and validate (infra/platform)"
+  "Format and validate (infra/frontend)"
+  "CI script and workflow checks"
+)
 home_region="${EXPECTED_OCI_REGION:-ap-hyderabad-1}"
 
 checks_file="$(mktemp)"
@@ -51,19 +78,15 @@ git_commit="$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || echo unknown)"
 gh_api() { gh api "$@" 2>/dev/null; }
 
 if [[ "$skip_github" == true ]]; then
-  record "gh-repo-identity" NOT_RUN "skipped by --skip-github"
-  record "gh-environment-production-plan" NOT_RUN "skipped by --skip-github"
-  record "gh-environment-production" NOT_RUN "skipped by --skip-github"
-  record "gh-branch-protection-main" NOT_RUN "skipped by --skip-github"
-  record "gh-actions-pinning" NOT_RUN "skipped by --skip-github"
-  record "gh-default-token-permissions" NOT_RUN "skipped by --skip-github"
+  for c in gh-repo-identity gh-environment-production-plan gh-environment-production \
+           gh-branch-protection-main gh-actions-pinning gh-actions-allowlist gh-token-permissions; do
+    record "$c" NOT_RUN "skipped by --skip-github"
+  done
 elif ! command -v gh >/dev/null; then
-  record "gh-repo-identity" NOT_RUN "gh CLI is not installed"
-  record "gh-environment-production-plan" NOT_RUN "gh CLI is not installed"
-  record "gh-environment-production" NOT_RUN "gh CLI is not installed"
-  record "gh-branch-protection-main" NOT_RUN "gh CLI is not installed"
-  record "gh-actions-pinning" NOT_RUN "gh CLI is not installed"
-  record "gh-default-token-permissions" NOT_RUN "gh CLI is not installed"
+  for c in gh-repo-identity gh-environment-production-plan gh-environment-production \
+           gh-branch-protection-main gh-actions-pinning gh-actions-allowlist gh-token-permissions; do
+    record "$c" NOT_RUN "gh CLI is not installed"
+  done
 else
   repo_json="$(gh_api "repos/${expected_owner}/${expected_repo}")"
   if jq -e '(.id | type) == "number" and (.owner.id | type) == "number"' <<<"$repo_json" >/dev/null 2>&1; then
@@ -82,19 +105,23 @@ else
 
   check_environment() {
     local name="$1"
-    local env_json policies reviewer_count branch_main
+    local env_json policies reviewer_json reviewer_ids branch_policy_count branch_main
     env_json="$(gh_api "repos/${expected_owner}/${expected_repo}/environments/${name}")"
     if [[ -z "$env_json" ]] || ! jq -e '.html_url' <<<"$env_json" >/dev/null 2>&1; then
       record "gh-environment-${name}" BLOCKED "environment does not exist; create it with required reviewers and a main-only deployment branch policy before attaching credentials (docs/acceptance/m1b-bootstrap/github-security.md)"
       return
     fi
+    # The protection rule type has been observed as both 'required_reviewer'
+    # and 'required_reviewers'; match either and compare the exact reviewer IDs.
+    reviewer_json="$(jq -c '[.protection_rules[]? | select(.type | test("^required_reviewers?$")) | [.reviewers[]?.reviewer.id]]' <<<"$env_json" 2>/dev/null)"
+    reviewer_ids="$(jq -r 'map(tostring) | join(",")' <<<"${reviewer_json:-[]}")"
     policies="$(gh_api "repos/${expected_owner}/${expected_repo}/environments/${name}/deployment-branch-policies")"
+    branch_policy_count="$(jq -r '."branch_policies" | length' <<<"${policies:-}" 2>/dev/null)"
     branch_main="$(jq -r --arg main main '[."branch_policies"[]."name"] | index($main) != null' <<<"${policies:-}" 2>/dev/null)"
-    reviewer_count="$(jq -r '.protection_rules | map(select(.type == "required_reviewer")) | length' <<<"$env_json" 2>/dev/null)"
-    if [[ "$branch_main" == "true" && "${reviewer_count:-0}" -ge 1 ]]; then
-      record "gh-environment-${name}" PASS "required reviewers active (${reviewer_count}), deployment restricted to main"
+    if [[ "${branch_main:-}" == "true" && "${branch_policy_count:-0}" == "1" && "$reviewer_ids" == "$expected_reviewer_ids" ]]; then
+      record "gh-environment-${name}" PASS "required reviewers with exact IDs (${reviewer_ids}), exactly one deployment branch policy restricted to main"
     else
-      record "gh-environment-${name}" BLOCKED "exists but incomplete protection: reviewers=${reviewer_count:-unknown}, main-only branch policy=${branch_main:-unknown}; complete steps 5-6 of docs/acceptance/m1b-bootstrap/operator-checklist.md before attaching credentials"
+      record "gh-environment-${name}" BLOCKED "exists but incomplete protection: reviewer ids '${reviewer_ids:-unknown}' (want ${expected_reviewer_ids}), branch policy count ${branch_policy_count:-unknown} (want exactly 1, main-only: ${branch_main:-unknown}); complete github-security.md §4 before attaching credentials"
     fi
   }
   check_environment production-plan
@@ -102,7 +129,19 @@ else
 
   protection_json="$(gh_api "repos/${expected_owner}/${expected_repo}/branches/main/protection")"
   if jq -e '.required_pull_request_reviews' <<<"${protection_json:-}" >/dev/null 2>&1; then
-    record "gh-branch-protection-main" PASS "main requires pull requests and reviews"
+    contexts="$(jq -r '."required_status_checks"."contexts" // [] | join("|")' <<<"$protection_json")"
+    enforce_admins="$(jq -r '."enforce_admins"."enabled"' <<<"$protection_json")"
+    force_push="$(jq -r '."allow_force_pushes"."enabled"' <<<"$protection_json")"
+    deletions="$(jq -r '."allow_deletions"."enabled"' <<<"$protection_json")"
+    missing_contexts=""
+    for ctx in "${expected_ci_contexts[@]}"; do
+      [[ "|$contexts|" == *"|$ctx|"* ]] || missing_contexts="${missing_contexts}${ctx}; "
+    done
+    if [[ "$enforce_admins" == "true" && "$force_push" == "false" && "$deletions" == "false" && -z "$missing_contexts" ]]; then
+      record "gh-branch-protection-main" PASS "pull requests required, admin-enforced, force pushes and deletion blocked, all ${#expected_ci_contexts[@]} CI contexts required"
+    else
+      record "gh-branch-protection-main" BLOCKED "protection incomplete: enforce_admins=${enforce_admins}, allow_force_pushes=${force_push}, allow_deletions=${deletions}, missing CI contexts: ${missing_contexts:-none}; apply github-security.md §5"
+    fi
   else
     record "gh-branch-protection-main" BLOCKED "main is unprotected; apply the branch-protection definition in docs/acceptance/m1b-bootstrap/github-security.md"
   fi
@@ -111,12 +150,19 @@ else
   if [[ "$(jq -r '.sha_pinning_required' <<<"${actions_json:-}" 2>/dev/null)" == "true" ]]; then
     record "gh-actions-pinning" PASS "full-length SHA pinning is enforced repository-wide"
   else
-    record "gh-actions-pinning" BLOCKED "sha_pinning_required is false; enable it (and the action allowlist) per docs/acceptance/m1b-bootstrap/github-security.md"
+    record "gh-actions-pinning" BLOCKED "sha_pinning_required is false; enable it per docs/acceptance/m1b-bootstrap/github-security.md §6 (all committed workflows are already SHA-pinned)"
   fi
-  if [[ "$(gh_api "repos/${expected_owner}/${expected_repo}/actions/permissions/workflow" | jq -r '.default_workflow_permissions // empty')" == "read" ]]; then
-    record "gh-default-token-permissions" PASS "default GITHUB_TOKEN permissions are read-only"
+  if [[ "$(jq -r '.allowed_actions' <<<"${actions_json:-}" 2>/dev/null)" == "selected" ]]; then
+    record "gh-actions-allowlist" PASS "actions are restricted to the selected allowlist"
   else
-    record "gh-default-token-permissions" FAIL "default workflow permissions are not read"
+    record "gh-actions-allowlist" BLOCKED "allowed_actions is not 'selected'; apply the allowlist in github-security.md §6"
+  fi
+  workflow_perms="$(gh_api "repos/${expected_owner}/${expected_repo}/actions/permissions/workflow")"
+  if [[ "$(jq -r '.default_workflow_permissions // empty' <<<"${workflow_perms:-}")" == "read" && \
+        "$(jq -r '.can_approve_pull_request_reviews' <<<"${workflow_perms:-}")" == "false" ]]; then
+    record "gh-token-permissions" PASS "default GITHUB_TOKEN permissions are read-only and the token cannot approve pull requests (self-review prevention)"
+  else
+    record "gh-token-permissions" FAIL "default workflow permissions are not read-only or the token may approve its own pull requests"
   fi
 fi
 
@@ -144,25 +190,22 @@ else
 fi
 
 # Operator-local inputs (git-ignored) required before the first bootstrap apply.
-if [[ -s "$repo_root/infra/bootstrap/terraform.auto.tfvars" ]]; then
-  record "operator-inputs-bootstrap" PASS "infra/bootstrap/terraform.auto.tfvars exists (contents never read or printed)"
+tfvars_file="$repo_root/infra/bootstrap/terraform.auto.tfvars"
+if [[ -s "$tfvars_file" ]]; then
+  record "operator-inputs-bootstrap" PASS "infra/bootstrap/terraform.auto.tfvars exists (contents never printed)"
 else
   record "operator-inputs-bootstrap" BLOCKED "infra/bootstrap/terraform.auto.tfvars is missing; create it from terraform.tfvars.example with the real Vault key OCID and policy statements"
 fi
 
 # ------------------------------------------------------------------- OCI ----
 if [[ "$skip_oci" == true ]]; then
-  record "oci-session" NOT_RUN "skipped by --skip-oci"
-  record "oci-region-home" NOT_RUN "skipped by --skip-oci"
-  record "oci-compartment" NOT_RUN "skipped by --skip-oci"
-  record "oci-inventory-match" NOT_RUN "skipped by --skip-oci"
-  record "oci-vault-key" NOT_RUN "skipped by --skip-oci"
+  for c in oci-session oci-region-home oci-compartment oci-inventory-match oci-cmk oci-import-scope; do
+    record "$c" NOT_RUN "skipped by --skip-oci"
+  done
 elif ! command -v oci >/dev/null; then
-  record "oci-session" NOT_RUN "oci CLI is not installed"
-  record "oci-region-home" NOT_RUN "oci CLI is not installed"
-  record "oci-compartment" NOT_RUN "oci CLI is not installed"
-  record "oci-inventory-match" NOT_RUN "oci CLI is not installed"
-  record "oci-vault-key" NOT_RUN "oci CLI is not installed"
+  for c in oci-session oci-region-home oci-compartment oci-inventory-match oci-cmk oci-import-scope; do
+    record "$c" NOT_RUN "oci CLI is not installed"
+  done
 else
   namespace="$(oci os ns get 2>/dev/null | jq -r '.data // empty')"
   if [[ -n "$namespace" ]]; then
@@ -185,33 +228,87 @@ else
     record "oci-compartment" BLOCKED "no active 'Test' compartment found; confirm the target compartment with the operator"
     compartment_id=""
   fi
-  if [[ -n "$compartment_id" ]]; then
-    instances="$(oci compute instance list --compartment-id "$compartment_id" 2>/dev/null \
-      | jq -r '[.data[] | select(."lifecycle-state" == "RUNNING" and .shape == "VM.Standard.E2.1.Micro")] | length')"
-    # An empty Object Storage bucket list is printed as zero bytes by the CLI.
-    bucket_output="$(oci os bucket list --compartment-id "$compartment_id" 2>/dev/null)"
-    if [[ -z "$bucket_output" ]]; then
-      buckets=0
-    else
-      buckets="$(jq -r '[.data[]?] | length' <<<"$bucket_output")"
-    fi
-    if [[ "$instances" == "2" && "$buckets" == "0" ]]; then
+
+  instances="$(oci compute instance list --compartment-id "${compartment_id:-ocid1.compartment.oc1..none}" 2>/dev/null \
+    | jq -r '[.data[] | select(."lifecycle-state" == "RUNNING" and .shape == "VM.Standard.E2.1.Micro")] | length')"
+  # An empty Object Storage bucket list is printed as zero bytes by the CLI.
+  bucket_output="$(oci os bucket list --compartment-id "${compartment_id:-ocid1.compartment.oc1..none}" 2>/dev/null)"
+  if [[ -z "$bucket_output" ]]; then
+    bucket_names=""
+  else
+    bucket_names="$(jq -r '[.data[]?."name"] | join(",")' <<<"$bucket_output")"
+  fi
+
+  if [[ "$mode" == "pre-bootstrap" ]]; then
+    if [[ "$instances" == "2" && -z "$bucket_names" ]]; then
       record "oci-inventory-match" PASS "two running VM.Standard.E2.1.Micro instances and no Object Storage buckets (pristine pre-bootstrap state)"
     else
-      record "oci-inventory-match" FAIL "inventory drift: running E2.1.Micro instances=${instances:-unknown}, buckets=${buckets:-unknown}"
+      record "oci-inventory-match" FAIL "inventory drift: running E2.1.Micro instances=${instances:-unknown}, buckets='${bucket_names:-(none)}'"
     fi
+    # Validate the actual CMK input, not merely an active Vault: the key OCID
+    # must be present in the operator inputs and belong to this region.
+    if [[ -s "$tfvars_file" ]]; then
+      cmk_id="$(grep -E '^[[:space:]]*state_bucket_kms_key_id[[:space:]]*=' "$tfvars_file" | head -1 | sed -E 's/^[^=]*=[[:space:]]*"?([^"#]+)"?.*/\1/' | tr -d '[:space:]')"
+      if [[ "$cmk_id" == "ocid1.key.oc1.${home_region}."* ]]; then
+        record "oci-cmk" PASS "state_bucket_kms_key_id is a key OCID from ${home_region} (OCID withheld); confirm the key is ENABLED and record the kms_key_compartment_ocid decision"
+      else
+        record "oci-cmk" FAIL "state_bucket_kms_key_id is missing, not a key OCID, or not from ${home_region}"
+      fi
+    else
+      record "oci-cmk" BLOCKED "terraform.auto.tfvars is missing; the CMK OCID cannot be validated before the apply"
+    fi
+    record "oci-import-scope" NOT_RUN "not applicable in pre-bootstrap mode"
   else
-    record "oci-inventory-match" NOT_RUN "compartment unknown"
-  fi
-  # The state-bucket CMK may live in the EventForge compartment or the tenancy
-  # root; both are searched (read-only). The CLI emits pagination warnings on
-  # stderr, so stdout alone is parsed.
-  vault_json="$(oci kms management vault list --compartment-id "${compartment_id:-ocid1.compartment.oc1..none}" 2>/dev/null | jq -r '[.data[]? | select(."lifecycle-state" == "ACTIVE")] | length')"
-  vault_root_json="$(oci kms management vault list --compartment-id "${tenancy_ocid:-ocid1.tenancy.oc1..none}" 2>/dev/null | jq -r '[.data[]? | select(."lifecycle-state" == "ACTIVE")] | length')"
-  if { [[ -n "$vault_json" ]] && [[ "$vault_json" -ge 1 ]]; } || { [[ -n "$vault_root_json" ]] && [[ "$vault_root_json" -ge 1 ]]; }; then
-    record "oci-vault-key" PASS "an active Vault exists (EventForge compartment: ${vault_json:-0}, tenancy root: ${vault_root_json:-0}); confirm the CMK OCID in terraform.auto.tfvars is in ${home_region} and that its key versions are enabled"
-  else
-    record "oci-vault-key" BLOCKED "no active Vault found; create the Vault and master key in ${home_region} before the bootstrap apply (state_bucket_kms_key_id is a required input)"
+    expected_buckets="${expected_state_bucket},${expected_backup_bucket}"
+    actual_sorted="$(printf '%s' "$bucket_names" | tr ',' '\n' | sort | tr '\n' ',' | sed 's/,$//')"
+    expected_sorted="$(printf '%s' "$expected_buckets" | tr ',' '\n' | sort | tr '\n' ',' | sed 's/,$//')"
+    if [[ "$instances" == "2" && "$actual_sorted" == "$expected_sorted" ]]; then
+      record "oci-inventory-match" PASS "two running instances and exactly the authorized buckets (${expected_state_bucket}, ${expected_backup_bucket}); post-bootstrap creation is the expectation, not drift"
+    else
+      record "oci-inventory-match" FAIL "post-bootstrap inventory mismatch: instances=${instances:-unknown}, buckets='${bucket_names:-(none)}' (want exactly ${expected_buckets})"
+    fi
+    # Live CMK validation: the state bucket must carry the customer-managed key.
+    state_kms_id="$(oci os bucket get --bucket-name "$expected_state_bucket" 2>/dev/null | jq -r '."data"."kms-key-id" // empty')"
+    backup_versioning="$(oci os bucket get --bucket-name "$expected_backup_bucket" 2>/dev/null | jq -r '."data"."versioning" // empty')"
+    state_versioning="$(oci os bucket get --bucket-name "$expected_state_bucket" 2>/dev/null | jq -r '."data"."versioning" // empty')"
+    cmk_state=""
+    if [[ -n "$state_kms_id" ]]; then
+      for comp in "${compartment_id:-}" "${tenancy_ocid:-}"; do
+        [[ -n "$comp" ]] || continue
+        while IFS=$'\t' read -r vault_id mgmt_endpoint; do
+          [[ -n "$vault_id" && -n "$mgmt_endpoint" ]] || continue
+          key_state="$(oci kms management key list --compartment-id "$comp" --endpoint "$mgmt_endpoint" --all 2>/dev/null \
+            | jq -r --arg id "$state_kms_id" '[.data[]? | select(.id == $id)][0]."lifecycle-state" // empty')"
+          if [[ -n "$key_state" ]]; then cmk_state="$key_state"; break 2; fi
+        done < <(oci kms management vault list --compartment-id "$comp" --all 2>/dev/null \
+          | jq -r '.data[]? | select(."lifecycle-state" == "ACTIVE") | [.id, ."management-endpoint"] | @tsv')
+      done
+    fi
+    if [[ "$state_versioning" == "Enabled" && "$backup_versioning" == "Enabled" && -n "$state_kms_id" && "$cmk_state" == "ENABLED" ]]; then
+      record "oci-cmk" PASS "both buckets versioned; state bucket carries a customer-managed key that is ENABLED (key OCID withheld)"
+    else
+      record "oci-cmk" FAIL "post-bootstrap encryption validation failed: state versioning=${state_versioning:-unknown}, backup versioning=${backup_versioning:-unknown}, state kms-key-id present=$([[ -n "$state_kms_id" ]] && echo yes || echo no), key state=${cmk_state:-not-found}"
+    fi
+    if [[ "$mode" == "pre-import" ]]; then
+      import_file="$repo_root/infra/platform/imported_resources.tf"
+      if [[ ! -f "$import_file" ]]; then
+        record "oci-import-scope" BLOCKED "infra/platform/imported_resources.tf does not exist yet; create it from imported_resources.tf.example during the approved import flow"
+      else
+        declared="$(grep -hE '^resource "[^"]+" "[^"]+"' "$import_file" | sed -E 's/resource "([^"]+)" "([^"]+)".*/\1.\2/' | sort -u)"
+        allowed='^(oci_core_vcn\.existing|oci_core_subnet\.(app|lb|mysql)|oci_core_instance\.api|oci_mysql_mysql_db_system\.existing|oci_load_balancer_load_balancer\.existing)$'
+        violations="$(printf '%s\n' "$declared" | grep -vE "$allowed" | grep -v '^$' || true)"
+        shared="$(printf '%s\n' "$declared" | grep -E '^(oci_core_security_list|oci_core_route_table|oci_core_internet_gateway|oci_core_dhcp_options|oci_core_nat_gateway)\.' || true)"
+        resource_count="$(printf '%s\n' "$declared" | grep -c . || true)"
+        pd_count="$(grep -c 'prevent_destroy' "$import_file" || true)"
+        if [[ -z "$violations" && -z "$shared" && "$pd_count" -ge "$resource_count" && "$resource_count" -ge 1 ]]; then
+          record "oci-import-scope" PASS "import template declares only reviewed mapped resources (${resource_count}), each protected with prevent_destroy; shared route/security resources untouched"
+        else
+          record "oci-import-scope" FAIL "import template violations: unapproved addresses [${violations//$'\n'/, }], shared network resources [${shared//$'\n'/, }], prevent_destroy count ${pd_count} vs ${resource_count} resources"
+        fi
+      fi
+    else
+      record "oci-import-scope" NOT_RUN "not applicable in ${mode} mode"
+    fi
   fi
 fi
 
@@ -228,6 +325,15 @@ if [[ -z "$scope_violations" ]]; then
   record "bootstrap-scope-allowlist" PASS "bootstrap declares only buckets, lifecycle policy, IAM identities, and notification resources"
 else
   record "bootstrap-scope-allowlist" FAIL "bootstrap declares unexpected resource types: ${scope_violations//$'\n'/, }"
+fi
+
+# The Object Storage -> KMS policy must use the hyphenated service subject,
+# scope to the key's compartment, and pin the exact key OCID.
+kms_statement="$(grep -A14 'resource "oci_identity_policy" "objectstorage_kms"' "$repo_root"/infra/bootstrap/main.tf | grep 'Allow service' | head -1)"
+if [[ "$kms_statement" == *"Allow service objectstorage-\${var.region} to use keys in compartment id \${var.kms_key_compartment_ocid} where target.key.id = '\${var.state_bucket_kms_key_id}'"* ]]; then
+  record "kms-policy-string" PASS "hyphenated service subject, key-compartment scope, exact target.key.id restriction"
+else
+  record "kms-policy-string" FAIL "the Object Storage KMS policy statement deviates from the verified form (hyphenated objectstorage-<region>, kms_key_compartment_ocid scope, target.key.id pin)"
 fi
 
 if grep -qE 'default[[:space:]]*=[[:space:]]*false' "$repo_root"/infra/platform/variables.tf && \
@@ -260,8 +366,8 @@ else
 fi
 
 # ----------------------------------------------------------------- Report ----
-report="$(jq -s --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg commit "$git_commit" \
-  '{schema_version:1,tool:"m1b-bootstrap-preflight",generated_at:$generated_at,git_commit:$commit,read_only:true,checks:.,summary:{pass:([.[]|select(.status=="PASS")]|length),fail:([.[]|select(.status=="FAIL")]|length),not_run:([.[]|select(.status=="NOT_RUN")]|length),blocked:([.[]|select(.status=="BLOCKED")]|length)}}' \
+report="$(jq -s --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg commit "$git_commit" --arg mode "$mode" \
+  '{schema_version:1,tool:"m1b-bootstrap-preflight",generated_at:$generated_at,git_commit:$commit,mode:$mode,read_only:true,checks:.,summary:{pass:([.[]|select(.status=="PASS")]|length),fail:([.[]|select(.status=="FAIL")]|length),not_run:([.[]|select(.status=="NOT_RUN")]|length),blocked:([.[]|select(.status=="BLOCKED")]|length)}}' \
   "$checks_file")"
 
 if [[ -n "$json_path" ]]; then
@@ -271,7 +377,7 @@ else
   printf '%s\n' "$report" | jq -r '.checks[] | "\(.status)\t\(.id)\t\(.detail)"'
 fi
 
-printf 'Preflight summary: PASS=%s FAIL=%s NOT_RUN=%s BLOCKED=%s\n' \
+printf 'Preflight summary (mode=%s): PASS=%s FAIL=%s NOT_RUN=%s BLOCKED=%s\n' "$mode" \
   "$(jq -r '.summary.pass' <<<"$report")" "$(jq -r '.summary.fail' <<<"$report")" \
   "$(jq -r '.summary.not_run' <<<"$report")" "$(jq -r '.summary.blocked' <<<"$report")"
 printf 'This preflight is read-only. Mutating steps require explicit operator approval: docs/acceptance/m1b-bootstrap/operator-checklist.md\n'
