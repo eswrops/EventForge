@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "phase": "M1B.2 — Controlled GitHub security setup (steps 1-6)",
+  "generated_at": "2026-10-27T00:50:00Z",
+  "git_commit": "365e4c054c49ee5f7d10dd7006adf4bccdd32210",
+  "authorization": "Operator review of M1B.1.1 directed M1B.2 as the first operator-controlled step; checklist step-3 approval recorded in operator-checklist.md before execution (PR #6). Step 7 (branch protection and Actions restrictions) explicitly awaits a separate recorded approval.",
+  "mutations_performed": [
+    {
+      "action": "Create environment production-plan",
+      "command_form": "jq -n JSON body | gh api -X PUT repos/eswrops/EventForge/environments/production-plan --input -; then POST deployment-branch-policies name=main",
+      "environment_id": 25412942570,
+      "required_reviewer": { "login": "eswrops", "id": 237514587 },
+      "prevent_self_review": false,
+      "branch_policies": [{ "id": 64473322, "name": "main" }],
+      "protection_rule_ids": [70216871, 70216872]
+    },
+    {
+      "action": "Create environment production",
+      "environment_id": 25412943777,
+      "required_reviewer": { "login": "eswrops", "id": 237514587 },
+      "prevent_self_review": false,
+      "branch_policies": [{ "id": 64473323, "name": "main" }],
+      "protection_rule_ids": [70216873, 70216874]
+    },
+    {
+      "action": "Approve the pending deployment of the protected OIDC claim inspection run",
+      "run_id": 40428463744,
+      "deployment_id": 7347323044,
+      "reviewer": { "login": "eswrops", "id": 237514587 },
+      "note": "Self-approval permitted by the documented single-operator configuration (prevent_self_review=false)."
+    }
+  ],
+  "mutations_refused": [
+    "No branch protection applied (checklist step 6 / M1B.2 step 7 — separate approval required; main remains unprotected).",
+    "No Actions allowlist or SHA-pinning changes applied (same step).",
+    "No secrets or variables created in either environment (credentials are checklist step 11).",
+    "No OCI, Cloudflare, DNS, TLS, or ingress changes of any kind."
+  ],
+  "verification": {
+    "preflight": {
+      "mode": "pre-bootstrap",
+      "summary": { "pass": 15, "fail": 0, "not_run": 1, "blocked": 6 },
+      "gh_environment_production_plan": "PASS (exact reviewer IDs 237514587, exactly one deployment branch policy restricted to main, prevent_self_review=false)",
+      "gh_environment_production": "PASS (same)",
+      "note": "The live GitHub response confirmed prevent_self_review lives inside the required_reviewers protection-rule object (null at environment top level), matching the corrected preflight expressions."
+    },
+    "live_oidc_claim_inspection": {
+      "run_id": 40428463744,
+      "url": "https://github.com/eswrops/EventForge/actions/runs/40428463744",
+      "conclusion": "success",
+      "result": "PASS (all expected OIDC claims matched exactly)",
+      "actual_subject": "repo:eswrops@237514587/EventForge@1434990962:environment:production-plan",
+      "claims_verified": [
+        "issuer: https://token.actions.githubusercontent.com",
+        "audience: github-actions",
+        "repository: eswrops/EventForge",
+        "repository_id: 1434990962",
+        "repository_owner_id: 237514587",
+        "ref: refs/heads/main (ref_type: branch)",
+        "environment: production-plan",
+        "job_workflow_ref: eswrops/EventForge/.github/workflows/oidc-claim-inspection.yml@refs/heads/main",
+        "validity window: iat/exp sane, lifetime 300s"
+      ],
+      "sanitization": "Only the claims above were recorded; the JWT and its signature were never printed, stored, or attached to this evidence."
+    }
+  },
+  "success_criteria": {
+    "both_environments_exist": true,
+    "both_require_intended_reviewer": true,
+    "only_main_can_deploy": true,
+    "self_review_prevention_disabled": true,
+    "actual_subject_matches_immutable_identity": true,
+    "no_oci_credentials_attached": true,
+    "no_oci_resources_modified": true
+  }
+}
