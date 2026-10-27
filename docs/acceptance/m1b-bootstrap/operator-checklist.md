@@ -37,8 +37,11 @@ throughout; `enable_api_ingress` remains false in every tfvars and plan.**
    `required_approving_review_count = 0` (deliberate single-maintainer configuration; §5b is the
    recorded future change once an independent reviewer exists). Also §6 Actions hardening
    (allowlist + SHA pinning) and the UI check of the fork-PR setting. Rollback: record prior
-   values (unprotected, `allowed_actions=all`) before changing. Approval: [ ] date: ______
-   reviewer: ______
+   values (unprotected, `allowed_actions=all`) before changing. **APPLIED 2026-10-27** — operator
+   instruction "do it" following the M1B.2B report; live values and rollback in
+   [../m1b2b/lockdown-applied.json](../m1b2b/lockdown-applied.json); preflight 18 PASS / 0 FAIL,
+   `gh-branch-protection-main`, `gh-actions-pinning`, `gh-actions-allowlist` all PASS. The
+   fork-PR approval setting check remains a UI-only item (no forks exist; repo is personal).
 
 7. **Review and approve the OCI Vault/key decision.** — Create the dedicated state CMK (or record
    reuse of `rust-api-secret-key`) per [oci-bootstrap.md](oci-bootstrap.md) §2; note the
