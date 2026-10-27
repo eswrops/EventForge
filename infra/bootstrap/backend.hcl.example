@@ -1,6 +1,10 @@
-# Copy to ignored backend.hcl after the first local bootstrap apply.
+# Operator workstation configuration. Copy to ignored backend.hcl only after
+# receiving explicit STATE-MIGRATION approval. Credentials stay in the active
+# OCI CLI DEFAULT profile; do not add OCIDs, fingerprints, or private-key paths.
 bucket    = "eventforge-tfstate-prod"
 namespace = "replace-with-object-storage-namespace"
 key       = "bootstrap/terraform.tfstate"
 region    = "replace-with-region"
+auth      = "APIKey"
+config_file_profile = "DEFAULT"
 
