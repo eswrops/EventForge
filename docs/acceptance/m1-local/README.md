@@ -65,7 +65,8 @@ mode 0700): `/Users/eswr/secure/evidence/m1local-20261027T154030Z/`.
 | DECLARATIVE-REPRODUCIBILITY | **PASS (2026-10-27)** — the eight imported-resource declarations are tracked in Git (discovery values in ignored `imported.auto.tfvars`); a clean checkout with the protected inputs plans **zero changes** against the offline state copy (37 no-op addresses) |
 | NETWORK-SECURITY-ENFORCEMENT | **PASS (2026-10-27, live inspection)** — effective posture verified closed: no public 8080/3306 anywhere, LB zero listeners, MySQL private-only, app→MySQL works; created NSGs are attached to nothing and stay that way until the separately reviewed ingress gate ([security.md](security.md)) |
 | OPERATIONS (Phase 6) | **PASS (review)** — release/rollback procedures sound; ONS subscription still PENDING (see [blockers.md](blockers.md) B3); application deployment NOT claimed |
-| M1-LOCAL REPORT (Phase 7) | **PASS** — [m1-local-report.json](m1-local-report.json) |
+| LOCAL-DEPLOYMENT-TOOLING | **PASS (2026-10-27)** — reviewed and merged as [PR #36](https://github.com/eswrops/EventForge/pull/36) (squash commit `e93bfc4`, 4/4 required checks); behavioral guard tests green in CI |
+| M1-LOCAL REPORT (Phase 7) | **PASS** — [m1-local-report.json](m1-local-report.json) (final commit `e93bfc4`) |
 | OCI-FEDERATION (from full M1) | DEFERRED — Oracle SR required; clients/trust untouched |
 | GITHUB-STAGE-2-IAM | DEFERRED — behind federation |
 | IAM-DENIAL | NOT_RUN — unchanged (needs an underprivileged principal; refuses `DEFAULT` by design) |
