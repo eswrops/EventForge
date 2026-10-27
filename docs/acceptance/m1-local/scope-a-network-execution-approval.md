@@ -1,6 +1,7 @@
 # Scope A — network security execution approval package
 
-Status: **PREPARED 2026-10-28 — NOTHING has been executed.** This package is executable:
+Status: **EXECUTED 2026-10-28 under the operator's "approved" grant — A0–A6 complete.**
+See the execution record at the bottom of this document. This package is executable:
 every mutation below is fully specified (Terraform saved plan, guarded CLI commands,
 immutable-artifact approval gates), but running any of it requires the operator's separate
 written approvals (§12) and the live evidence re-verification steps (§7). Source of truth:
@@ -254,3 +255,25 @@ and then still requires its own approval.
   `tests/ci/test-safe-plan-scope-a.sh`, `tests/ci/test-sl-update-guard.sh`.
 - Preparation-run plan SHA: `22ac9eb0035417a6dba73317fd0fa9d488263fb78abd162a64199a720c20ef8b`
   (0 add / 4 change / 0 destroy at commit `6357b85c`).
+
+## 14. Execution record (2026-10-28, under the operator's "approved" grant)
+
+Operator grant: "approved" (2026-10-28, in the Scope-A execution session). All steps ran
+separately observable, each with its stop conditions checked; no step was auto-retried.
+
+| Step | Result |
+| --- | --- |
+| A0 | **PASS** — RSA-4096 console keypair generated (protected evidence); `instance-console-connection` created for BOTH VMs (ACTIVE); serial-console SSH path proven live (OCI console banner received on both connections). Note: ed25519 keys are refused by the console-connection API (service requires RSA). |
+| A1 | **PASS** — live operator source IP `49.207.214.221` = approved /32 (evidence `a1-operator-ip.txt`). |
+| A2 | **PASS with one deviation** — plan regenerated at `a338ab0f…` under the scope-A policy: SHA-256 `8cce2da3dc56e420070ebf6016c14f5eca4b5fe0b1f528ecdb58c796e949cfa6`, exactly 4 updates, both checkers PASS; applied under the written [scope-a-apply-approval.md](approvals/scope-a-apply-approval.md); state serial 10 → **12**, lineage unchanged. VM1/VM2/LB associations took effect. **Deviation:** the MySQL db-NSG attachment did NOT take effect — the provider's `UpdateDbSystem` silently ignored `nsg_ids` (state stayed `[]`), and the documented direct CLI method (`oci mysql db-system update --nsg-ids …`) produced an `UPDATE_DBSYSTEM` work request that **FAILED** with no error detail exposed. MySQL remained ACTIVE and unaffected throughout. Recorded as [blockers.md](blockers.md) **B5** (service-side limitation on `MySQL.Free`); the un-appliable attribute was removed from `imported_resources.tf` (plan clean again) with a comment pointing at B5. The db security list remains the governing 3306 control — exactly the transitional state the approved package specified. |
+| A3 | **PASS** — VM1/VM2: exactly 1 VNIC attachment each, `nsg_ids = [eventforge-app-nsg]`; LB `network_security_group_ids = [eventforge-lb-nsg]`, zero listeners; **real authenticated SSH** from the approved /32 to BOTH VMs (`SSH-OK rust-api-test` / `rust-api-worker`); MySQL service greeting (`26.10.0-cloud`, port 3306) received from BOTH VMs (protocol-level path proof — the admin username is recorded nowhere, so a full authenticated login was not possible; recorded caveat); `m1-verify.sh` 18 PASS / 0 FAIL, drift clean. |
+| A4 | **PASS** — all three manifests verified by the guard first (live hashes matched the recorded evidence; fresh ETags `f70bc513`/`d6dcb5f9`/`5245ef64`), then applied one at a time under [scope-a-sl-correction.md](approvals/scope-a-sl-correction.md): app SL SSH source → `49.207.214.221/32`; LB SL 0.0.0.0/0 80/443 rules removed (ingress now `[]`); db SL 1522 removed, 3306 retained. Each apply re-read the live object and `--if-match` guarded the write; post-update hash verification passed for all three. |
+| A5 | **PASS** — post-change union captured live (evidence `a5-union-record.txt`): LB SL ingress hash `37517e5f…` (empty), db SL `57027896…` (3306 only), app SL `75441a3a…` (reviewed /32 only); NSG memberships as in A3; recorded in [security.md](security.md). |
+| A6 | **PASS** — MySQL greeting re-proven from both VMs post-SL-changes; SSH via the corrected SL re-proven; TCP 80/443 to 129.159.239.48 refused from a non-Cloudflare vantage (corroborating only — no listener exists; the conclusive filter test repeats at scope B); final `m1-verify.sh` 18 PASS / 0 FAIL; ONS subscription still **PENDING** (B3 stands). |
+
+Execution evidence (protected, outside the repository, 0600/0700):
+`/Users/eswr/secure/evidence/m1local-scopea-exec-20261027T193848Z/` and the apply/plan run
+dirs `m1local-20261027T194619Z`/`m1local-20261027T194649Z`/final verify runs.
+
+Nothing outside the approved scope was mutated: no listener, certificate, backend, DNS,
+Origin CA, Cloudflare resource, IAM/federation object, or scope-B item of any kind.

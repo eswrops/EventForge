@@ -30,8 +30,10 @@ attestation fails closed. Templates: [oci-import-approval.template](oci-import-a
 
 Executed under written records: OCI-IMPORT (2026-10-27, [oci-import-approval.md](oci-import-approval.md)),
 PLATFORM-APPLY (2026-10-27, [platform-apply-approval.md](platform-apply-approval.md) +
-[platform-apply-approval-2-budget-fix.md](platform-apply-approval-2-budget-fix.md)).
-Pending (no record committed yet): **SL-CORRECTION** — the scope-A security-list corrections
-require the operator's written record per
-[../scope-a-network-execution-approval.md](../scope-a-network-execution-approval.md) §12
-before `eventforge-sl-update apply` will run.
+[platform-apply-approval-2-budget-fix.md](platform-apply-approval-2-budget-fix.md)),
+**Scope-A PLATFORM-APPLY (2026-10-28, [scope-a-apply-approval.md](scope-a-apply-approval.md),
+plan SHA `8cce2da3…`) and SL-CORRECTION (2026-10-28, [scope-a-sl-correction.md](scope-a-sl-correction.md))**
+— see the execution record in
+[../scope-a-network-execution-approval.md](../scope-a-network-execution-approval.md) §14.
+Pending: none (the MySQL DB-NSG attachment is service-blocked — B5 — and is not approvable
+until the platform supports it).

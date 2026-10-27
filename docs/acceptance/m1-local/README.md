@@ -91,7 +91,7 @@ contexts + `CI script and workflow checks`). Re-verified live this date:
 | Import declarations | 8/8 tracked in `imported_resources.tf` (8 `prevent_destroy`) |
 | Protected input files | `backend.hcl`, `terraform.auto.tfvars`, `imported.auto.tfvars`, `terraform.tfvars` all still git-ignored (`git check-ignore` verified) |
 | ONS subscription | still **PENDING** (`eswr.ops@gmail.com`, topic `eventforge-operations` ACTIVE) — operator confirmation action recorded in [blockers.md](blockers.md) B3 |
-| Next-gate package | [next-ingress-security-approval.md](next-ingress-security-approval.md) prepared (no changes applied) |
+| Next-gate package | [scope-a-network-execution-approval.md](scope-a-network-execution-approval.md) **EXECUTED 2026-10-28** under the operator's approval (§14 execution record): NSG associations applied to both VM VNICs + LB (serial 12), SL corrections applied via the hash-pinned guard, real SSH + MySQL-path verification; MySQL DB-NSG attachment service-blocked (B5) |
 
 Statuses retained: **OCI-FEDERATION = DEFERRED, STAGE-2-IAM = NOT_APPLIED,
 IAM-DENIAL = NOT_RUN, ONS-DELIVERY = PENDING.** None were converted to PASS.
