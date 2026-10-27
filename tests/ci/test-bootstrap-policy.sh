@@ -37,6 +37,8 @@ assert_not_contains "$main_tf" 'objectstorage_\${var.region}' \
 # by "compartment id <ocid>" — and the exact key OCID restriction is retained.
 assert_contains "$main_tf" 'to use keys in \${local.kms_policy_location} where target.key.id = .\${var.state_bucket_kms_key_id}.' \
   "conditional policy location with exact target.key.id restriction"
+assert_contains "$main_tf" 'Allow service objectstorage-\${var.region} to manage object-family in compartment id \${var.compartment_ocid} where target.bucket.name = .\${var.state_bucket_name}.' \
+  "lifecycle service permission scoped to the state bucket"
 assert_contains "$main_tf" 'var.kms_key_compartment_ocid == var.tenancy_ocid' \
   "tenancy-root (root compartment) acceptance in the policy location"
 assert_contains "$main_tf" '? "tenancy"' \
