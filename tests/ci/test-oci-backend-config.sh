@@ -18,7 +18,7 @@ resource_has_prevent_destroy() {
   ' "$repo_root/infra/bootstrap/main.tf"
 }
 
-for root in bootstrap platform frontend; do
+for root in bootstrap platform frontend iam; do
   versions="$repo_root/infra/$root/versions.tf"
   backend="$repo_root/infra/$root/backend.hcl.example"
   [[ "$(grep -cE '^[[:space:]]*backend "oci" \{\}[[:space:]]*$' "$versions")" == "1" ]] \
@@ -30,8 +30,8 @@ for root in bootstrap platform frontend; do
 done
 
 keys="$(grep -hE '^[[:space:]]*key[[:space:]]*=' "$repo_root"/infra/*/backend.hcl.example | sed -E 's/^[^=]*=[[:space:]]*"([^"]+)".*/\1/' | sort -u)"
-expected_keys=$'bootstrap/terraform.tfstate\nfrontend/terraform.tfstate\nplatform/terraform.tfstate'
-[[ "$keys" == "$expected_keys" ]] || fail "backend keys must be distinct bootstrap/platform/frontend keys"
+expected_keys=$'bootstrap/terraform.tfstate\nfrontend/terraform.tfstate\niam/terraform.tfstate\nplatform/terraform.tfstate'
+[[ "$keys" == "$expected_keys" ]] || fail "backend keys must be distinct bootstrap/platform/frontend/iam keys"
 
 resource_has_prevent_destroy 'resource "oci_objectstorage_bucket" "terraform_state" {' \
   || fail "state bucket must prevent Terraform-driven deletion"

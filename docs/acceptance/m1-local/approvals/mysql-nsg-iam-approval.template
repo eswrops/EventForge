@@ -1,0 +1,51 @@
+# MYSQL-NSG-IAM — approval record
+
+> **Template.** Execution is REFUSED until the operator fills every
+> `<fill>` field below. Creating the two IAM policies is the only authorized
+> mutation. See [../b5-mysql-nsg-diagnosis.md](../b5-mysql-nsg-diagnosis.md)
+> for the diagnosis this corrects and
+> [../mysql-nsg-retest-approval.md](../mysql-nsg-retest-approval.md) for the
+> separately approved retest.
+
+## Grant
+
+- Approved by: `<operator name>`
+- Grant phrase: `<verbatim operator grant>`
+- Timestamp (UTC): `<YYYY-MM-DDTHH:MM:SSZ>`
+- Source commit (must be the merged main commit containing `infra/iam/`): `<sha>`
+
+## Bound mutation
+
+- Root: `infra/iam` — plan **2 to add, 0 to change, 0 to destroy**
+- Saved-plan SHA-256 (regenerate at the pinned commit with
+  `terraform init -backend-config=backend.hcl && terraform plan -out=tfplan.bin`,
+  then `shasum -a 256 tfplan.bin`): `<sha256>`
+- Resources created (exactly these two, no others):
+  - `oci_identity_policy.mysql_nsg_membership` (Test compartment) —
+    `NETWORK_SECURITY_GROUP_UPDATE_MEMBERS` for `mysqldbsystem` principals of
+    DB systems in Test
+  - `oci_identity_policy.mysql_vnic_update` (tenancy) — `VNIC_CREATE,
+    VNIC_UPDATE, VNIC_ASSOCIATE_NETWORK_SECURITY_GROUP,
+    VNIC_DISASSOCIATE_NETWORK_SECURITY_GROUP` for the same principals,
+    scoped to root-compartment resources
+
+## Preconditions (verify before apply)
+
+1. Fresh plan at the pinned commit equals the reviewed diff (statements and
+   compartments exactly as in `infra/iam/main.tf`; no other changes).
+2. `m1-verify.sh` on the platform root still passes 18/0 (no platform drift).
+3. MySQL DB system `rust-api-heatwave` is ACTIVE and `nsg_ids = []`.
+
+## Stop conditions
+
+- Plan shows any resource besides the two policies, any change/destroy, or any
+  statement differing from the reviewed text → STOP.
+- Policy-create API error (e.g., syntax rejection of
+  `in compartment id <tenancy-ocid>`) → STOP; do not fall back to
+  `in tenancy` or any broader location without a new approval.
+- Anything else unexpected → STOP, preserve logs.
+
+## Explicitly not authorized by this approval
+
+MySQL NSG retry, security-list changes, Terraform applies in other roots,
+GitHub Stage-2 workload policies, federation changes, scope B.

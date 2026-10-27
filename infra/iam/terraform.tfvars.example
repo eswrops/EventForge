@@ -1,0 +1,7 @@
+# Git-ignored values (copy to terraform.auto.tfvars on the operator
+# workstation). No secrets here — all values are readable from existing
+# state/evidence; they are excluded from git only to keep OCID pinning
+# explicit and reviewed per root.
+region                = "replace-with-region"
+tenancy_ocid          = "ocid1.tenancy.oc1..replace"
+db_compartment_ocid   = "ocid1.compartment.oc1..replace"
