@@ -88,21 +88,36 @@ The probe reports authorization, configuration, and other initialization failure
 
 ```bash
 terraform -chdir=infra/bootstrap state list          # proves read + auth
-scripts/ci/verify-oci-backend.sh                      # disposable-key write/read/lock/contention/release
+RUN_ID=<run id> TERRAFORM_BIN=/Users/eswr/tools/terraform/1.12.2/terraform \
+  TF_OCI_AUTH=APIKey TF_OCI_PROFILE=DEFAULT \
+  TF_STATE_BUCKET=eventforge-tfstate-prod \
+  OCI_OBJECT_STORAGE_NAMESPACE=axrq1dasyz3y OCI_REGION=ap-hyderabad-1 \
+  scripts/ci/verify-oci-backend.sh     # disposable-key write/read/lock/contention/release
 ```
+
+The hardened script derives its key from the mandatory `RUN_ID`
+(`validation/live-acceptance-<RUN_ID>/terraform.tfstate`), fails closed on any
+unapproved bucket/namespace/region/key/workspace, pins Terraform 1.12.2 via
+`TERRAFORM_BIN`, reaps its background apply on EXIT/INT/TERM, and preserves
+its temporary root and logs in a protected evidence directory on failure. See
+[live-backend-validation-approval.md](../m1-final/live-backend-validation-approval.md).
 
 ## 5. Isolated backend lock validation (checklist step D)
 
-`scripts/ci/verify-oci-backend.sh` (already committed; CI-proven syntax) creates a disposable
-`terraform_data` probe on `validation/.../terraform.tfstate`, holds its lock for ~15 s, expects a
-concurrent plan to fail **with a lock error**, releases on destroy, and proves a post-destroy plan
-can acquire the lock. It prints the retained validation key for operator review. While the first
-lock is held, list the bucket objects and **record the exact lock-object suffix** — that string
-finalizes the `target.object.name matches /.*lock.*/i` pattern in
-[federation.md](federation.md) §C.
+`scripts/ci/verify-oci-backend.sh` proves the lock cycle on ONE disposable
+RUN_ID key: it verifies the exact state key and its `<key>.lock` partner are
+absent, applies a disposable `terraform_data` probe, waits for the remote lock
+object to appear and records its exact name (finalizing the
+`target.object.name matches /.*lock.*/i` pattern in
+[federation.md](federation.md) §C), expects a concurrent plan to fail **with a
+lock error**, releases on destroy, and proves a post-destroy plan can acquire
+the lock. It prints the retained validation key for operator review.
 
-Then run `scripts/ci/verify-oci-backend-denied.sh` with an explicitly underprivileged resource
-principal against the same disposable key and record the redacted authorization denial.
+The IAM-denial companion (`scripts/ci/verify-oci-backend-denied.sh`) requires
+an explicitly underprivileged identity and refuses the privileged `DEFAULT`
+profile; until federation provides such a principal it stays deferred — it is
+not run under the operator identity and no denial PASS is claimed from mock
+runs.
 
 ## 6. State encryption validation
 
@@ -118,17 +133,34 @@ same key id. Record both in the evidence log.
 ## 7. State version recovery test (checklist step G, disposable key first)
 
 The lifecycle policy deletes noncurrent state versions after `state_version_retention_days` (30).
-Recovery = copy a prior version back over the live key (never `state push -force`):
+Recovery = copy a prior version back over the live key (never `state push -force`).
+The supported OCI CLI command for listing versions is `oci os object
+list-object-versions` (`list-versions` does not exist); its `data` items carry
+`name`, `version-id`, `is-delete-marker`, and `time-created` — there is no
+`is-current` field, so the current version is identified via `oci os object
+head`. The committed, offline-tested `scripts/acceptance/oci-state-version-recovery.sh`
+implements every step below on the disposable RUN_ID keys, waits for the
+asynchronous copy (`--wait-for-state COMPLETED`), and verifies the restored
+snapshot's lineage/serial plus Terraform readability:
 
 ```bash
 # 1. List versions of the disposable key and pick a prior version-id:
-oci os object list-versions --bucket-name eventforge-tfstate-prod \
-  --prefix validation/ | jq -r '.data[] | select(."version-id" != null) | ."name", ."version-id"'
-# 2. Restore by copying that version onto a scratch key first (validation/restore-test/...):
-oci os object copy --source-bucket eventforge-tfstate-prod --source-object-name <name> \
-  --source-version-id <version-id> --destination-bucket eventforge-tfstate-prod \
-  --destination-object-name validation/restore-test/terraform.tfstate --destination-region ap-hyderabad-1
-# 3. terraform state pull on a scratch backend pointing at the scratch key must succeed.
+oci os object list-object-versions --bucket-name eventforge-tfstate-prod \
+  --prefix validation/ | jq -r '.data[] | select(."is-delete-marker" != true and ."version-id" != null) | ."name", ."time-created", ."version-id"'
+#    (exclude delete markers; the CURRENT version id comes from object head)
+oci os object head --bucket-name eventforge-tfstate-prod \
+  --name validation/live-acceptance-<RUN_ID>/terraform.tfstate | jq '."version-id"'
+# 2. Restore a validated NONCURRENT version onto a scratch key first
+#    (validation/restore-test-<RUN_ID>/terraform.tfstate, confirmed absent
+#    beforehand), waiting for the asynchronous copy:
+oci os object copy --source-bucket eventforge-tfstate-prod \
+  --source-object-name validation/live-acceptance-<RUN_ID>/terraform.tfstate \
+  --source-version-id <noncurrent-version-id> \
+  --destination-bucket eventforge-tfstate-prod \
+  --destination-object-name validation/restore-test-<RUN_ID>/terraform.tfstate \
+  --destination-region ap-hyderabad-1 --wait-for-state COMPLETED
+# 3. terraform state pull on a scratch backend pointing at the scratch key must succeed
+#    and match the source version's lineage/serial.
 # 4. Only after the scratch rehearsal: repeat onto the real key if a real recovery is needed,
 #    with a fresh manual backup taken immediately beforehand.
 ```
@@ -156,6 +188,6 @@ drift is never auto-corrected.
 | --- | --- |
 | Failed bootstrap apply | `terraform apply` is not partially committed; fix inputs and re-plan. Buckets/policies created are removable via the operator console after review (never `terraform destroy` against production without a separate approval). |
 | Bad backend migration | Preserve the local backup kept in §2, verify whether the remote key was written, and stop for incident approval. Never overwrite remote state with `state push -force`; use the documented version-copy recovery only after approval. |
-| Lock stuck on a disposable key | Wait for the 15 s probe to finish or delete the disposable lock object after positively verifying its `validation/` prefix. |
+| Lock stuck on a disposable key | Wait for the 15 s probe to finish. If the lock object still survives, deleting it is a mutation that requires a separate scoped approval naming the exact object (positively verify its `validation/` prefix, age, and owner via `oci os object head` first) — the validation scripts never remove locks and never `force-unlock`. |
 | Lock stuck on production | Never `force-unlock`. Verify no plan/apply is running (Actions run history), then use the documented incident procedure: confirm the lock object's age/owner, remove the lock object via the operator session with an explicit approval record, and re-lock. |
 | Bad state write | Copy the prior version back (§6) after a fresh backup. |

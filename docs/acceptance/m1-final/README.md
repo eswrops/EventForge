@@ -15,7 +15,7 @@ records) are preserved unmodified as historical snapshots.
 | [release-operations.md](release-operations.md) | Phase 8 evidence — exit gate **RELEASE-OPERATIONS = PREPARED** |
 | [remote-state.md](remote-state.md) | Phase 4 — state-identity root-cause verification for the executed bootstrap migration (lineage/serial reset), offline reproduction, regression tests, preserved ACCEPT_TRANSITION decision |
 | [terraform-upstream-issue.md](terraform-upstream-issue.md) | Sanitized upstream Terraform issue draft (migration metadata reset) |
-| [live-backend-validation-approval.md](live-backend-validation-approval.md) | Prepared (NOT executed) authorization package for live backend lock/contention/recovery/denial validation on disposable keys |
+| [live-backend-validation-approval.md](live-backend-validation-approval.md) | Hardened (NOT executed) authorization package for live STATE-LOCKING, STATE-CONTENTION, and STATE-RECOVERY validation on RUN_ID-confined disposable keys; IAM-DENIAL deferred to the federation phase |
 | remaining Phase 9 files | written as their phases execute (architecture, github-security, oci-bootstrap, workload-federation, imports, network-security, monitoring, cost-and-free-tier, acceptance-checklist, blockers, m1-final-report.json) |
 
 ## Gate status
@@ -25,7 +25,7 @@ records) are preserved unmodified as historical snapshots.
 | GH-SECURITY (Phase 1) | **PASS** — lockdown applied under operator approval and independently re-verified live: 4 required contexts strict+admin-enforced, linear history, 0 approvals (deliberate solo-maintainer config), strict SHA-pinned allowlist, read-only workflow tokens, both environments protected, OIDC inspection re-run PASS (run 40453021102), docs-only PR merge path proven (PRs #10/#11), direct push to main rejected by the protected-branch hook |
 | BOOTSTRAP-PLAN (Phase 2) | **PASS (Stage 1)** — executed under explicit operator approval: the dedicated state CMK was created (`state_bucket_kms_key_id` recorded in the tfvars; checklist step 7 resolved), and the bucket `eventforge-tfstate-prod` is live with `NoPublicAccess`, versioning Enabled, and CMK-bound. Exactly the 8 Stage-1 resources planned (preflight 19 PASS / 0 unexpected FAIL; checksum-verified Terraform 1.12.2). Stage-2 workload policies remain gated behind `enable_workload_policies = false` pending federation |
 | OCI-BOOTSTRAP (Phase 3) | **PASS (Stage 1)** — 8/8 planned creates applied and verified live (state bucket, backups bucket, version lifecycle, Object Storage KMS policy, dynamic group, instance-backup policy, ONS topic + subscription). Stage-2 (2 GitHub workload-policy creates) is pending the first live token exchange (federation steps 10–11) |
-| OCI-REMOTE-STATE (Phase 4) | **PARTIAL (2026-10-27)** — bootstrap migration executed under STATE-MIGRATION approval; the resulting lineage/serial reset was root-caused offline in Terraform 1.12.2 (see [remote-state.md](remote-state.md)) with regression tests committed under `tests/terraform-upstream/`; ACCEPT_TRANSITION preserved (no rewrite, no re-migration). Live lock/contention/recovery/denial validation is **NOT_RUN** — prepared approval package: [live-backend-validation-approval.md](live-backend-validation-approval.md) |
+| OCI-REMOTE-STATE (Phase 4) | **PARTIAL (2026-10-27)** — bootstrap migration executed under STATE-MIGRATION approval; the resulting lineage/serial reset was root-caused offline in Terraform 1.12.2 (see [remote-state.md](remote-state.md)) with regression tests committed under `tests/terraform-upstream/`; ACCEPT_TRANSITION preserved (no rewrite, no re-migration). Live STATE-LOCKING/CONTENTION/RECOVERY remain NOT_RUN; IAM-DENIAL deferred to the federation phase — hardened approval package: [live-backend-validation-approval.md](live-backend-validation-approval.md) |
 | OCI-FEDERATION (Phase 5) | BLOCKED — needs trusts/clients (steps 10–11); `production` subject not yet inspected in its environment |
 | OCI-IMPORTS (Phase 6) | BLOCKED — needs remote state |
 | M1C-PLATFORM (Phase 7) | BLOCKED — needs imports |
@@ -34,11 +34,13 @@ records) are preserved unmodified as historical snapshots.
 
 ## Next operator action
 
-1. Approve and execute the live backend validation package
-   [live-backend-validation-approval.md](live-backend-validation-approval.md) (Option A:
-   operator workstation with the approved API-key auth edit), recording the RUN_ID and
-   observations in its §4 execution record. STATE-LOCKING, STATE-CONTENTION,
-   STATE-RECOVERY, and IAM-DENIAL stay NOT_RUN until this happens.
+1. Approve and execute the hardened live backend validation package
+   [live-backend-validation-approval.md](live-backend-validation-approval.md)
+   (Option A: operator workstation, `TF_OCI_AUTH=APIKey` +
+   `TF_OCI_PROFILE=DEFAULT`, pinned Terraform 1.12.2 via `TERRAFORM_BIN`, and
+   the package's concrete RUN_ID), recording observations in its §12 execution
+   record. STATE-LOCKING, STATE-CONTENTION, and STATE-RECOVERY stay NOT_RUN
+   until then; IAM-DENIAL stays deferred to the federation phase.
 2. Federation steps 10–11 of
    [../m1b-bootstrap/operator-checklist.md](../m1b-bootstrap/operator-checklist.md)
    (trusts + clients), then the gated Stage-2 `enable_workload_policies` apply.
