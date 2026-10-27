@@ -139,10 +139,16 @@ JSON
   approval can be demanded from a nonexistent second reviewer; combined with `enforce_admins: true`
   and `required_status_checks.strict`, even the administrator must open PRs and wait for CI.
 - Direct pushes are therefore impossible for everyone, including admins.
+- **Sole-maintainer merge path (verified semantics):** with zero required approvals, GitHub's
+  merge rules gate a PR solely on the required status checks (plus `strict: true` keeping the
+  branch up to date). A sole maintainer can therefore merge their own PR the moment all four
+  checks pass and the branch is current — no approval is requested, and the GITHUB_TOKEN cannot
+  approve one either (`can_approve_pull_request_reviews: false`, preflight
+  `gh-token-permissions`). This was confirmed as the documented merge-gate behavior; the first
+  protected merge after step 6 is applied is the live confirmation.
 - Residual limitation (accepted, single-maintainer era): with zero required approvals, the sole
-  maintainer self-merges. The GITHUB_TOKEN cannot approve PRs
-  (`can_approve_pull_request_reviews: false`, verified by the preflight `gh-token-permissions`
-  check), so automation cannot inflate approvals either.
+  maintainer self-merges. The GITHUB_TOKEN cannot inflate approvals, and the limitation is
+  recorded here and in the preflight.
 
 ### 5b. Future configuration (apply when another eligible reviewer exists)
 
@@ -182,22 +188,35 @@ workflow (verified in run 40418147090).
 ## 6. GitHub Actions hardening — desired state ⛔
 
 ```bash
-# Restrict to a pinned allowlist of trusted actions.
+# Restrict Actions to the reviewed, SHA-pinned allowlist. Deliberately strict:
+# github_owned_allowed and verified_allowed are BOTH false — blanket
+# verified-creator access is not enabled — so only the four pinned
+# owner/repo@SHA entries below can run. The authoritative list is
+# scripts/ci/action-allowlist.json; every workflow reference is checked
+# against it by tests/ci/test-required-checks.sh.
 gh api -X PUT repos/eswrops/EventForge/actions/permissions \
   -f enabled=true -f allowed_actions=selected
 gh api -X PUT repos/eswrops/EventForge/actions/permissions/selected-actions \
-  -F github_owned_allowed=true \
-  -F verified_allowed=true \
-  -F patterns_allowed[]=actions/checkout@11d5960a326750d5838078e36cf38b85af677262 \
-  -F patterns_allowed[]=actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff \
-  -F patterns_allowed[]=hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd \
-  -F patterns_allowed[]=dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec
+  -F github_owned_allowed=false \
+  -F verified_allowed=false \
+  -F 'patterns_allowed[]=actions/checkout@11d5960a326750d5838078e36cf38b85af677262' \
+  -F 'patterns_allowed[]=actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff' \
+  -F 'patterns_allowed[]=hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd' \
+  -F 'patterns_allowed[]=dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec'
 
 # Minimum GITHUB_TOKEN permissions (already active — verify after changes).
 gh api -X PUT repos/eswrops/EventForge/actions/permissions/workflow \
   -f default_workflow_permissions=read \
   -F can_approve_pull_request_reviews=false
 ```
+
+All four pinned SHAs were verified against their source repositories during
+M1B.2B: `actions/checkout@11d5960…` = tag `v4.4.0`, `actions/setup-go@40f1582…`
+= tag `v5.6.0`, `hashicorp/setup-terraform@b9cd54a…` = tag `v3.1.2`, and
+`dtolnay/rust-toolchain@b725eda…` = the `stable` branch tip at pin time.
+The pull_request workflow also sets `persist-credentials: false` on both
+checkout steps, so PR validation leaves no GITHUB_TOKEN material on the
+runner (dispatch workflows run only in the protected environments).
 
 Current state: `default_workflow_permissions=read` ✅, `can_approve_pull_request_reviews=false` ✅,
 `allowed_actions=all` ⛔, `sha_pinning_required=false` ⛔. SHA-pinning enforcement may not be
