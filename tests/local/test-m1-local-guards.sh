@@ -246,9 +246,18 @@ blocks="$(grep -cE '^resource ' "$import_cfg")"
 [[ "$blocks" -eq 7 ]] || fail "import config must declare exactly the 7 blocks (8 addresses)"
 pd="$(grep -cE 'prevent_destroy = true' "$import_cfg")"
 [[ "$pd" -eq 7 ]] || fail "every imported block must carry prevent_destroy"
-if grep -nE 'nsg_ids' "$import_cfg" | grep -qv '#'; then
-  fail "import config must not attach NSGs (separately reviewed update)"
-fi
+# NSG attachment is the reviewed Scope-A change: exactly the three reviewed
+# associations (app NSG on the shared instance declaration, db NSG on MySQL,
+# lb NSG on the load balancer) and nothing else.
+app_nsg="$(grep -cE '^[[:space:]]*nsg_ids = \[oci_core_network_security_group\.app\.id\]$' "$import_cfg" || true)"
+db_nsg="$(grep -cE '^[[:space:]]*nsg_ids[[:space:]]*= \[oci_core_network_security_group\.db\.id\]$' "$import_cfg" || true)"
+lb_nsg="$(grep -cE '^[[:space:]]*network_security_group_ids = \[oci_core_network_security_group\.lb\.id\]$' "$import_cfg" || true)"
+[[ "$app_nsg" -eq 1 && "$db_nsg" -eq 1 && "$lb_nsg" -eq 1 ]] \
+  || fail "import config must carry exactly the reviewed Scope-A NSG associations"
+other_nsg="$(grep -nE 'nsg_ids|network_security_group_ids' "$import_cfg" \
+  | grep -v '^\s*#' \
+  | grep -cvE 'nsg_ids[[:space:]]*= \[oci_core_network_security_group\.(app|db)\.id\]$|network_security_group_ids[[:space:]]*= \[oci_core_network_security_group\.lb\.id\]$' || true)"
+[[ "$other_nsg" -eq 0 ]] || fail "unexpected NSG references in the import config"
 if git -C "$repo_root" ls-files --error-unmatch "infra/platform/imported.auto.tfvars" >/dev/null 2>&1; then
   fail "imported.auto.tfvars (live OCIDs/private addresses) must never be tracked"
 fi

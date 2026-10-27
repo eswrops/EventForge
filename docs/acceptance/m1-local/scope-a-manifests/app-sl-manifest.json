@@ -1,0 +1,41 @@
+{
+  "security_list_id": "ocid1.securitylist.oc1.ap-hyderabad-1.aaaaaaaairrc6gzsc5emsx6hhvajcd6nmmagbgqf2qy5zvb77dqrfo63sm3q",
+  "display_name": "rust-api-test-ssh-only",
+  "recorded": {
+    "etag": "f70bc513",
+    "ingress_hash": "7834d1bff1e243e2366a9a90a1c3dcd92a0e4c947683069b9ad9238079b8ca49",
+    "egress_hash": "416ab7f0baf5299edde0db3d41fa645e9aa03e64311225ea568e3232d8aaac36"
+  },
+  "proposed": {
+    "ingress": [
+      {
+        "description": "SSH for rust-api-test",
+        "icmp-options": null,
+        "is-stateless": false,
+        "protocol": "6",
+        "source": "49.207.214.221/32",
+        "source-type": "CIDR_BLOCK",
+        "tcp-options": {
+          "destination-port-range": {
+            "max": 22,
+            "min": 22
+          },
+          "source-port-range": null
+        },
+        "udp-options": null
+      }
+    ],
+    "egress": [
+      {
+        "description": null,
+        "destination": "0.0.0.0/0",
+        "destination-type": "CIDR_BLOCK",
+        "icmp-options": null,
+        "is-stateless": false,
+        "protocol": "all",
+        "tcp-options": null,
+        "udp-options": null
+      }
+    ]
+  }
+}

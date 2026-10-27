@@ -1,0 +1,30 @@
+GATE: SL-CORRECTION
+APPROVER: <operator name as it will appear in M1_SCOPE_A_APPROVED_BY>
+
+This record authorizes the Scope-A security-list corrections documented in
+docs/acceptance/m1-local/scope-a-network-execution-approval.md §6, executed only via
+scripts/ops/eventforge-sl-update (which re-verifies every hash below against the live
+object before any write and refuses any concurrent change).
+
+Manifests approved (recorded rule-array hashes — immutable artifacts):
+
+- lb-sl-manifest.json
+  security_list_id: <paste from manifest>
+  ingress_hash: <paste .recorded.ingress_hash>
+  egress_hash: <paste .recorded.egress_hash>
+- app-sl-manifest.json
+  security_list_id: <paste>
+  ingress_hash: <paste>
+  egress_hash: <paste>
+- db-sl-manifest.json
+  security_list_id: <paste>
+  ingress_hash: <paste>
+  egress_hash: <paste>
+
+The Terraform NSG-association apply (A2) has been completed and verified before this
+record takes effect (separate PLATFORM-APPLY record).
+
+Dated statement: I reviewed the captured live security-list objects, the proposed rule
+arrays, and the stop conditions, and I authorize exactly these three corrections — no
+other security list, no other rule, no ingress enablement.
+Date: <YYYY-MM-DD>

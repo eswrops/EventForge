@@ -29,6 +29,7 @@ and is not rewritten by this track.
 | [platform-plan.md](platform-plan.md) | Phase 4 saved-plan record and safe-plan policy result |
 | [security.md](security.md) | Post-apply network security verification |
 | [next-ingress-security-approval.md](next-ingress-security-approval.md) | Prepared change package for the future ingress gate: effective rule union, legacy-rule findings, scope-A/scope-B separation, sequencing, rollback, expected plan actions |
+| [scope-a-network-execution-approval.md](scope-a-network-execution-approval.md) | Executable Scope-A package: baseline reconfirmation, saved-plan proof (4 in-place updates), scope-A safe-plan policy, guarded security-list corrections with manifests + hashes, A0–A6 sequence, approvals |
 | [cost.md](cost.md) | Quota / Always-Free / budget findings |
 | [blockers.md](blockers.md) | Blockers and deferred items |
 | [m1-local-report.json](m1-local-report.json) | Machine-readable gate summary |

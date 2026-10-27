@@ -49,7 +49,7 @@ jobs:
           go-version: '1.24.0'
       - name: Run shell fixtures
         run: |
-          bash -n scripts/ci/*.sh scripts/oci-free-tier-preflight.sh ops/scripts/* tests/ci/*.sh
+          bash -n scripts/ci/*.sh scripts/oci-free-tier-preflight.sh ops/scripts/* scripts/ops/* tests/ci/*.sh
           tests/ci/run.sh
           jq empty scripts/ci/*-safe-plan-policy.json
       - name: Lint GitHub Actions workflows

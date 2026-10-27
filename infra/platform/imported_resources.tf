@@ -13,9 +13,11 @@
 #   - prevent_destroy on every imported resource (never removed)
 #   - shared route table + security lists pinned as read-only OCID inputs,
 #     never declared here; never replaced by this root
-#   - NO NSG attachment is declared for the imported VNICs or the load
-#     balancer: the live VNICs carry no NSGs, and attaching eventforge-app-nsg
-#     is a separately reviewed existing-resource update (Phase 3 constraint)
+#   - NSG attachment: the scope-A reviewed change (2026-10-28,
+#     docs/acceptance/m1-local/scope-a-network-execution-approval.md) appends
+#     exactly one eventforge-* NSG to each imported component below — an
+#     append-only association change; no pre-existing membership existed, and
+#     security lists / route tables stay pinned and untouched
 #   - narrowly scoped ignore_changes only: instance runtime attributes and
 #     the MySQL admin credential pair (write-only, invisible to the API);
 #     never broad ignores
@@ -128,8 +130,10 @@ resource "oci_core_instance" "api" {
     subnet_id        = var.app_subnet_ocid
     assign_public_ip = true
     private_ip       = each.value.private_ip
-    # No NSG list is declared here on purpose: see the import-safety contract
-    # in the file header. Attaching an NSG is a separate reviewed update.
+    # Scope-A reviewed attachment (append-only): primary VNIC joins
+    # eventforge-app-nsg. The live VNIC carried no NSGs before this change;
+    # the subnet security list stays pinned above and keeps applying.
+    nsg_ids = [oci_core_network_security_group.app.id]
   }
 
   source_details {
@@ -149,8 +153,11 @@ resource "oci_mysql_mysql_db_system" "existing" {
   shape_name          = "MySQL.Free"
   availability_domain = var.imported_mysql_availability_domain
   subnet_id           = var.mysql_subnet_ocid
-  admin_username      = var.mysql_admin_username
-  admin_password      = var.mysql_admin_password
+  # Scope-A reviewed attachment (append-only): db system joins
+  # eventforge-db-nsg (top-level attribute in this provider version).
+  nsg_ids        = [oci_core_network_security_group.db.id]
+  admin_username = var.mysql_admin_username
+  admin_password = var.mysql_admin_password
   backup_policy {
     is_enabled        = true
     retention_in_days = 1
@@ -176,6 +183,10 @@ resource "oci_load_balancer_load_balancer" "existing" {
   }
   display_name = "rust-api-public-lb"
   subnet_ids   = [var.lb_subnet_ocid]
+  # Scope-A reviewed attachment (append-only): LB joins eventforge-lb-nsg.
+  # Listeners remain absent here — enable_api_ingress stays false and the
+  # LB security list still governs until separately corrected.
+  network_security_group_ids = [oci_core_network_security_group.lb.id]
 
   lifecycle { prevent_destroy = true }
 }
