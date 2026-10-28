@@ -246,21 +246,20 @@ blocks="$(grep -cE '^resource ' "$import_cfg")"
 [[ "$blocks" -eq 7 ]] || fail "import config must declare exactly the 7 blocks (8 addresses)"
 pd="$(grep -cE 'prevent_destroy = true' "$import_cfg")"
 [[ "$pd" -eq 7 ]] || fail "every imported block must carry prevent_destroy"
-# NSG attachment state after the Scope-A execution (2026-10-28): the app NSG
-# is declared for both instance primary VNICs and the lb NSG for the load
-# balancer; the MySQL db-NSG line is FORBIDDEN while blocker B5 stands (the
-# service rejects NSG updates on this DB system — re-add it only after B5 is
-# resolved), and nothing else may reference NSGs.
+# NSG attachment state after the MYSQL-NSG-RETEST preparation (2026-10-29):
+# the app NSG is declared for both instance primary VNICs, the lb NSG for the
+# load balancer, and the db NSG is re-declared for the MySQL DB system as the
+# reviewed one-attempt retest change (GATE: MYSQL-NSG-RETEST apply contract;
+# the original failure was missing IAM policies, not a service limitation).
+# Nothing else may reference NSGs.
 app_nsg="$(grep -cE '^[[:space:]]*nsg_ids = \[oci_core_network_security_group\.app\.id\]$' "$import_cfg" || true)"
 lb_nsg="$(grep -cE '^[[:space:]]*network_security_group_ids = \[oci_core_network_security_group\.lb\.id\]$' "$import_cfg" || true)"
-[[ "$app_nsg" -eq 1 && "$lb_nsg" -eq 1 ]] \
-  || fail "import config must carry the app and lb Scope-A NSG associations"
-db_nsg="$(grep -cE 'nsg_ids[[:space:]]*= \[oci_core_network_security_group\.db\.id\]' "$import_cfg" || true)"
-[[ "$db_nsg" -eq 0 ]] \
-  || fail "MySQL db-NSG declaration is forbidden while blocker B5 stands (service rejects NSG updates)"
+db_nsg="$(grep -cE '^[[:space:]]*nsg_ids[[:space:]]*= \[oci_core_network_security_group\.db\.id\]$' "$import_cfg" || true)"
+[[ "$app_nsg" -eq 1 && "$lb_nsg" -eq 1 && "$db_nsg" -eq 1 ]] \
+  || fail "import config must carry the app, lb, and db (retest) NSG associations"
 other_nsg="$(grep -nE 'nsg_ids|network_security_group_ids' "$import_cfg" \
   | grep -vE '^[0-9]+:[[:space:]]*#' \
-  | grep -cvE 'nsg_ids[[:space:]]*= \[oci_core_network_security_group\.app\.id\]$|network_security_group_ids[[:space:]]*= \[oci_core_network_security_group\.lb\.id\]$' || true)"
+  | grep -cvE 'nsg_ids[[:space:]]*= \[oci_core_network_security_group\.(app|db)\.id\]$|network_security_group_ids[[:space:]]*= \[oci_core_network_security_group\.lb\.id\]$' || true)"
 [[ "$other_nsg" -eq 0 ]] || fail "unexpected NSG references in the import config"
 if git -C "$repo_root" ls-files --error-unmatch "infra/platform/imported.auto.tfvars" >/dev/null 2>&1; then
   fail "imported.auto.tfvars (live OCIDs/private addresses) must never be tracked"
@@ -407,6 +406,8 @@ grep -q 'presence UNKNOWN (OCI probe classified' "$verify_sh" \
   || fail "verify must fail closed on unknown state-key classifications"
 grep -q 'm1_mysql_nsg_state_live_agree' "$verify_sh" \
   || fail "verify must run the independent state/live NSG comparison"
+grep -q 'm1_mysql_nsg_state_live_agree "$state_pull" "$mysql_live_file"' "$verify_sh" \
+  || fail "verify must pass the comparison FILE paths (the function does not parse JSON strings)"
 for script in m1-platform-init.sh m1-platform-plan.sh m1-preflight.sh; do
   grep -q 'm1_state_key_status' "$repo_root/scripts/local/$script" \
     || fail "$script must classify the platform state key (no failed HEAD as absence)"
@@ -443,6 +444,11 @@ grep -q 'retest-live-active' "$apply_sh" && grep -q 'retest-live-before' "$apply
   || fail "apply must check live MySQL ACTIVE and the reviewed before-value nsg_ids"
 grep -q 'M1_MYSQL_RETEST_POLICY=' "$repo_root/scripts/local/m1-local.env" \
   || fail "m1-local.env must name the dedicated retest policy"
+plan_sh="$repo_root/scripts/local/m1-platform-plan.sh"
+grep -q 'assert-safe-plan-scope-a.sh' "$plan_sh" \
+  || fail "plan generation must run the attribute-level checker when the retest policy is selected"
+grep -q 'retest-attribute-check' "$plan_sh" \
+  || fail "the attribute-level retest check must be a named plan gate"
 grep -q 'retest' "$repo_root/tests/ci/run.sh" \
   || fail "retest fixture tests must stay wired into the CI test runner"
 echo "ok: MYSQL-NSG-RETEST gate contracts (regression 10: retest path)"

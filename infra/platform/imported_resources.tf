@@ -153,15 +153,17 @@ resource "oci_mysql_mysql_db_system" "existing" {
   shape_name          = "MySQL.Free"
   availability_domain = var.imported_mysql_availability_domain
   subnet_id           = var.mysql_subnet_ocid
-  # DB-NSG attachment (Scope-A) is BLOCKED for this DB system (2026-10-28):
-  # the provider's UpdateDbSystem silently ignored nsg_ids, and the direct
-  # CLI UPDATE_DBSYSTEM work request FAILED with AuthorizationFailed — the
-  # mysqldbsystem resource principal lacks the NSG/VNIC-update policies the
-  # MySQL service requires (see blockers.md B5 and b5-mysql-nsg-diagnosis.md;
-  # the corrective policies are staged in infra/iam, NOT applied). The db
-  # security list (3306 from the app subnet) remains the governing control;
-  # re-add the db NSG association here under the MYSQL-NSG-RETEST approval
-  # once the infra/iam policies are applied.
+  # DB-NSG attachment re-introduced for the MYSQL-NSG-RETEST (2026-10-29):
+  # the original failure was AuthorizationFailed — the mysqldbsystem resource
+  # principal lacked the NSG/VNIC-update policies the MySQL service requires
+  # (blockers.md B5, b5-mysql-nsg-diagnosis.md). The corrective policies are
+  # staged in infra/iam (NOT applied at the time of writing); applying this
+  # declaration requires the separate GATE: MYSQL-NSG-RETEST approval record
+  # and the apply gate re-verifies the live db system is ACTIVE with
+  # nsg_ids=[] immediately before the one-attempt update. The db security
+  # list (3306 from the app subnet) remains the governing transitional
+  # control until the separate SL-CORRECTION approval.
+  nsg_ids        = [oci_core_network_security_group.db.id]
   admin_username = var.mysql_admin_username
   admin_password = var.mysql_admin_password
   backup_policy {
