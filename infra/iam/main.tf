@@ -80,38 +80,13 @@ resource "oci_identity_policy" "mysql_vnic_update" {
   }
 }
 
-# Connectivity-diagnostics policy (prepared 2026-10-28, NOT applied; PR kept
-# unmerged until the operator chooses this diagnostic approach). Lets the two
-# existing instances (dynamic group `eventforge-instances`, whose matching
-# rule is exactly the two instance OCIDs) receive Compute Run Command
-# diagnostics so VM→MySQL connectivity can be re-verified without widening
-# any SSH source. This is Oracle's DOCUMENTED standard form for the Run
-# Command instance principal: Oracle's Run Command example explicitly grants
-# `use instance-agent-command-execution-family` to the instances' dynamic
-# group with the `where request.instance.id=target.instance.id` condition.
-# It is also the least-privilege reading: `use` = READ on the execution
-# family (the arbitrary-code trigger INSTANCE_AGENT_COMMAND_EXECUTION_CREATE
-# exists only at `manage`, which stays operator-side), Test compartment only,
-# each instance pinned to its own commands.
-#
-# Operational caveat (fail-closed): creating the policy does NOT prove
-# command completion — the first approved command execution must be verified
-# end-to-end (`oci instance-agent command-execution get` reaching SUCCESS
-# with output). If commands are created but never polled or completed, STOP
-# and prepare a re-reviewed package; never broaden in place.
-resource "oci_identity_policy" "instance_run_command_diagnostics" {
-  provider = oci
-
-  name        = "eventforge-instance-run-command-diagnostics"
-  description = "B5 connectivity diagnostics: let the two existing instances (dynamic group eventforge-instances) poll Compute Run Command diagnostics in the Test compartment, read-only, each instance restricted to its own commands."
-
-  compartment_id = var.db_compartment_ocid
-
-  statements = [
-    "Allow dynamic-group eventforge-instances to use instance-agent-command-execution-family in compartment id ${var.db_compartment_ocid} where request.instance.id=target.instance.id",
-  ]
-
-  lifecycle {
-    prevent_destroy = true
-  }
-}
+# The connectivity-diagnostics policy (instance_run_command_diagnostics,
+# ACTIVE ocid1.policy.oc1..aaaaaaaarfejx2xlnqxtb3dlobx6joeaih32bat6v5btcr5by7wqidds2kda
+# from 2026-10-28) was REMOVED 2026-10-29 after its diagnostic window closed:
+# the NSG-paired 3306 path is live-proven on both VMs and the transitional
+# security-list rule is gone. Its history: contract
+# scripts/ci/iam-plan-contract-diag.json, template
+# docs/acceptance/m1-local/approvals/iam-run-command-diag-approval.template,
+# execution record docs/acceptance/m1-local/b5-execution-record.md. Recreate
+# only through a new reviewed package if Run Command diagnostics are ever
+# needed again.
