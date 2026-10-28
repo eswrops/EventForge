@@ -144,3 +144,39 @@ Diagnosis of the original misread: not IAM, not identity propagation, not a
 plugin or delivery failure — pure pickup-latency observation error (polling
 stopped at ~14 minutes; pickup completed at ~17). Remaining uncertainty: the
 agent's exact poll cadence is not observable without guest log access.
+
+## Addendum 3 (2026-10-29T05:3xZ): hardening close-out — SSH recovery, SL correction, diagnostics-policy removal EXECUTED
+
+Operator follow-up "approve all" (2026-10-29) authorized the remaining
+sequence; all steps executed and verified:
+
+1. **SSH-SOURCE-UPDATE (executed)**: dedicated safe-plan policy merged (PR
+   #52); fresh plan `d7481a3f…` at `c673f65…` (attribute-check PASS);
+   NSG rule applied via `m1-platform-apply.sh` (serial 13→14, evidence
+   `m1local-20261028T232006Z`); app SL updated via `eventforge-sl-update`
+   (hash-pinned manifest, verified). Both controls now pin
+   `49.207.216.108/32`, port 22 only. **Two-VM SSH acceptance test: SSH-OK
+   `rust-api-test` and `rust-api-worker`** (note: guest user is `ubuntu`,
+   not `opc`).
+2. **Both-VM connectivity proof (executed)**: the pinned diagnostic
+   (`ddd3b3ac…`) run over SSH — **TCP-3306 CONNECT OK + greeting + exit 0 on
+   BOTH VMs at 23:22:38/39Z** (current, pre-removal).
+3. **SL-CORRECTION (executed)**: fresh manifest (etag `3fc7be5a`, ingress
+   `57027896…`, egress `416ab7f0…`) under the signed GATE: SL-CORRECTION
+   record (evidence `db-sl-correction-*`); the transitional
+   `10.0.2.0/24 → 3306` ingress rule REMOVED. **Immediate post-removal
+   test: BOTH VMs CONNECT OK + greeting + exit 0 at 23:23:49/51Z — the
+   app-NSG↔db-NSG 3306 pairing is the sole remaining MySQL path and it is
+   live-proven.** Recovery manifest (rule re-add) retained in evidence.
+4. **Diagnostics-policy removal (executed)**: resource removed from
+   `infra/iam` (PR #53); destroy plan `33e9e07d…` (exactly 1 destroy, state
+   lineage `2d169472…` serial 2); ONE gated execution → IAM state serial 3
+   with exactly the two MySQL policies; the diagnostics policy is absent
+   from OCI. The Run Command path can be recreated only through a new
+   reviewed package.
+
+**Final `m1-verify.sh`: 19 PASS / 0 FAIL** (evidence
+`hardening-close-verify-20261028T232857Z`) — state/live agreement, drift
+clean. Effective MySQL exposure is now EXACTLY: app-NSG → db-NSG 3306
+(SSH remains /32-locked to the operator's current IP). No legacy subnet-wide
+database access remains anywhere.
