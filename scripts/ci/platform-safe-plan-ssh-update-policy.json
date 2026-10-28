@@ -1,0 +1,23 @@
+{
+  "protected_imports": [
+    "^oci_core_vcn\\.existing$",
+    "^oci_core_subnet\\.(app|lb|mysql)$",
+    "^oci_core_instance\\.api(\\[.*\\])?$",
+    "^oci_mysql_mysql_db_system\\.existing$",
+    "^oci_load_balancer_load_balancer\\.existing$"
+  ],
+  "allow": [
+    {
+      "address_regex": "^oci_core_network_security_group_security_rule\\.ssh_from_operator$",
+      "actions": ["update"],
+      "allow_import_update": true,
+      "allowed_attribute_paths": ["source"],
+      "expected_attribute_values": {
+        "source": "49.207.216.108/32"
+      },
+      "expected_attribute_values_before": {
+        "source": "49.207.214.221/32"
+      }
+    }
+  ]
+}
