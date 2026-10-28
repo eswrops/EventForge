@@ -1,27 +1,31 @@
 # M1-LOCAL security verification
 
-Status: **EFFECTIVE network security inspected live 2026-10-28 — post-Scope-A state; re-verified
-read-only 2026-10-28 (m1-verify 18/0, serial 12, drift clean, SSH + MySQL re-proven)**
+Status: **EFFECTIVE network security inspected live 2026-10-29 — post-B5-hardening
+state; re-verified read-only 2026-10-29 (m1-verify 19/0, platform serial 14, drift
+clean, refreshing plan = zero changes —
+[post-b5-reproducibility-audit.md](post-b5-reproducibility-audit.md))**
 (the Scope-A NSG associations + security-list corrections were applied and verified under
-written approvals; see [scope-a-network-execution-approval.md](scope-a-network-execution-approval.md)
-§Execution record and §7 of that package for the pre-change union).
+written approvals 2026-10-28; see [scope-a-network-execution-approval.md](scope-a-network-execution-approval.md)
+§Execution record and §7 of that package for the pre-change union; the B5 DB-NSG
+attachment, SSH-source refresh, transitional-SL-rule removal, and diagnostics-policy
+removal were executed and verified 2026-10-28 — [b5-execution-record.md](b5-execution-record.md)).
 `scripts/local/m1-verify.sh` is the repeatable verification gate; it fails closed (a failed
 OCI listing is never treated as absence) and checks each item below.
 
-## Effective network security — post-Scope-A associations and permitted traffic
+## Effective network security — post-B5-hardening associations and permitted traffic
 
-| Component | NSG membership (live 2026-10-28) | Governing security list | Effective ingress |
+| Component | NSG membership (live 2026-10-29) | Governing security list | Effective ingress |
 | --- | --- | --- | --- |
-| VM1 `rust-api-test` (10.0.2.129, public 129.225.99.202) | `eventforge-app-nsg` (verified live) | `rust-api-test-ssh-only` (app subnet) | **UNION**: TCP 22 from `49.207.214.221/32` (SL, corrected from the stale `49.207.205.137/32`) ∪ TCP 22 from the reviewed /32 (app NSG) ∪ TCP 8080 from `eventforge-lb-nsg` (app NSG). **Nothing else** — 8080 only from the (listener-less) LB NSG. |
+| VM1 `rust-api-test` (10.0.2.129, public 129.225.99.202) | `eventforge-app-nsg` (verified live) | `rust-api-test-ssh-only` (app subnet) | **UNION**: TCP 22 from `49.207.216.108/32` (app SL and app NSG — both controls refreshed to the same approved /32 on 2026-10-29; SL history: `.137`→`.221`→`.108`) ∪ TCP 8080 from `eventforge-lb-nsg` (app NSG). **Nothing else** — 8080 only from the (listener-less) LB NSG. |
 | VM2 `rust-api-worker` (10.0.2.94, public 129.225.99.0) | `eventforge-app-nsg` (verified live) | `rust-api-test-ssh-only` (app subnet) | same as VM1 |
-| LB `rust-api-public-lb` (public 129.159.239.48) | `eventforge-lb-nsg` (verified live) | `rust-api-lb-public` (lb subnet) — **ingress now `[]`** (both 0.0.0.0/0 80/443 rules removed) | **UNION**: TCP 443 ONLY from the 15 reviewed Cloudflare origin ranges (LB NSG). The legacy unrestricted 80/443 rules are GONE. LB still has **zero listeners**, so nothing is served. |
-| MySQL `rust-api-heatwave` (10.0.3.18, port 3306) | **none** — `nsg_ids = []` (db-NSG attachment **BLOCKED — missing IAM resource-principal policies**, re-diagnosed 2026-10-28 from the failed work requests; the earlier "service-level limitation" claim is retracted — [blockers.md](blockers.md) B5, [b5-mysql-nsg-diagnosis.md](b5-mysql-nsg-diagnosis.md)) | `rust-api-database-private` (db subnet) | TCP **3306** from `10.0.2.0/24` (app subnet) — retained as the explicit transitional control; **1522 rule REMOVED** (legacy PostgreSQL-era port). Private subnet, no public IP. |
+| LB `rust-api-public-lb` (public 129.159.239.48) | `eventforge-lb-nsg` (verified live) | `rust-api-lb-public` (lb subnet) — **ingress `[]`** | **UNION**: TCP 443 ONLY from the 15 reviewed Cloudflare origin ranges (LB NSG). The legacy unrestricted 80/443 rules are GONE. LB still has **zero listeners**, so nothing is served. |
+| MySQL `rust-api-heatwave` (10.0.3.18, port 3306) | **`eventforge-db-nsg`** — DB-NSG attachment **RESOLVED** 2026-10-28T22:26Z (B5; state serial 13→14 matches live) | `rust-api-database-private` (db subnet) — **ingress `[]`** (the transitional `10.0.2.0/24 → 3306` rule was REMOVED 2026-10-28T23:23Z after both-VM proof; the 1522 legacy-port rule was removed earlier) | TCP **3306 ONLY from `eventforge-app-nsg`** (app-NSG↔db-NSG pairing) — the sole remaining MySQL path, live-proven from BOTH VMs post-removal. Private subnet, no public IP. |
 
 Route table (shared by all three subnets): single static rule `0.0.0.0/0 → Internet Gateway`
 (egress unrestricted; app NSG additionally narrows nothing — union semantics keep the SL's
 all-egress rule in force).
 
-### Verified live post-change (2026-10-28, evidence m1local-scopea-exec-20261027T193848Z)
+### Verified live post-change — Scope-A execution record (2026-10-28, evidence m1local-scopea-exec-20261027T193848Z — HISTORICAL; superseded by the 2026-10-29 section above for SSH source, db SL, and MySQL NSG state)
 
 - Both VM VNICs: exactly 1 attachment each, `nsg_ids = [eventforge-app-nsg]` — no secondary
   VNIC was created.
@@ -38,17 +42,41 @@ all-egress rule in force).
 - `m1-verify.sh` **18 PASS / 0 FAIL** post-apply and post-SL-corrections; state lineage
   `cdda242b-92c1-4371-5b43-495f3849fc4d` unchanged (serial 12 after the apply); drift clean.
 
+### Verified live post-B5 hardening + read-only audit (2026-10-29)
+
+- **B5 RESOLVED and hardened**: `rust-api-heatwave` ACTIVE with
+  `nsg_ids = [eventforge-db-nsg]`; the transitional `10.0.2.0/24 → 3306`
+  security-list rule REMOVED (2026-10-28T23:23Z) after the pinned diagnostic
+  passed on BOTH VMs pre-removal (23:22:38/39Z) — and the immediate
+  post-removal test passed on BOTH VMs (23:23:49/51Z, TCP-3306 CONNECT OK +
+  greeting + exit 0). The app-NSG↔db-NSG pairing is the **sole live-proven
+  MySQL path**; db SL ingress is `[]`.
+- **SSH source /32-restricted on BOTH controls**: app SL and app NSG both pin
+  `49.207.216.108/32`, port 22 only; two-VM SSH acceptance PASS (guest user
+  `ubuntu`).
+- **Diagnostics IAM policy REMOVED** (PR #53 + one gated destroy; IAM state
+  `2d169472…` serial 3 = exactly the two MySQL policies).
+- Platform state `cdda242b…` serial 14, lineage unchanged; `m1-verify.sh`
+  **19 PASS / 0 FAIL**, drift clean.
+- **Reproducibility (2026-10-29 audit)**: normal refreshing plan with pinned
+  Terraform 1.12.2 = zero changes, zero drift, `applyable=false`;
+  `operator_ssh_cidr = 49.207.216.108/32` matches the approved live source.
+  SSH apply-gate deviation corrected: future SSH rotations require
+  `GATE: SSH-SOURCE-UPDATE` with apply-time plan/live recheck +
+  regression tests ([post-b5-reproducibility-audit.md](post-b5-reproducibility-audit.md)).
+
 ### Remaining exposures / notes
 
-- **MySQL DB-NSG gap (B5)**: the intended app-NSG↔db-NSG pairing is half-built — the app NSG
-  carries the 3306 egress rule to the db NSG, but the db system cannot join the db NSG.
-  **Root cause (re-diagnosed 2026-10-28): missing `mysqldbsystem` resource-principal IAM
-  policies** (`AuthorizationFailed` in both failed UPDATE_DBSYSTEM work requests), not a
-  service limitation. The db SL's subnet-wide 3306 rule remains the operative control;
-  tightening it requires B5 resolution first ([b5-mysql-nsg-diagnosis.md](b5-mysql-nsg-diagnosis.md)).
-- **SSH**: SL-level SSH now equals the reviewed /32; the legacy `.137` rule is gone.
-  SSH from other addresses was not tested from a second vantage (single-VPS test recommended
-  at next opportunity).
+- **MySQL exposure (closed)**: effective exposure is EXACTLY
+  app-NSG → db-NSG on 3306 (B5 RESOLVED 2026-10-28; transitional SL rule
+  removed; the earlier B5 blocker text and the 2026-10-28 "remaining
+  exposures" B5 bullet below are superseded — see
+  [b5-execution-record.md](b5-execution-record.md) Addendum 3 and
+  [blockers.md](blockers.md)).
+- **SSH**: SL-level and NSG-level SSH now equal the same reviewed /32
+  (`49.207.216.108/32`); the legacy `.137` and intermediate `.221` sources
+  are gone from both controls. SSH from other addresses was not tested from a
+  second vantage (single-VPS test recommended at next opportunity).
 - **LB → application**: still blocked (no listener; and 8080 only permitted LB-NSG→app-NSG,
   which is now attached on both sides).
 - **Egress**: unrestricted (SL) — unchanged.

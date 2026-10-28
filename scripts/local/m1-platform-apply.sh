@@ -84,9 +84,13 @@ commit="$(git -C "$M1_REPO_ROOT" rev-parse HEAD)"
 # authorizes a general platform apply).
 required_gate="PLATFORM-APPLY"
 retest_gate=0
+ssh_update_gate=0
 if [[ "$meta_safe_plan_policy" == "$M1_MYSQL_RETEST_POLICY" ]]; then
   retest_gate=1
   required_gate="MYSQL-NSG-RETEST"
+elif [[ "$meta_safe_plan_policy" == "$M1_SSH_UPDATE_POLICY" ]]; then
+  ssh_update_gate=1
+  required_gate="SSH-SOURCE-UPDATE"
 fi
 if m1_verify_approval_record "$approval_record" "$required_gate" "$plan_sha" "$commit"; then
   record_approver="$(awk -F': ' '/^APPROVER:/{print $2; exit}' "$approval_record")"
@@ -95,7 +99,7 @@ if m1_verify_approval_record "$approval_record" "$required_gate" "$plan_sha" "$c
     || fail_gate approval-record "M1_APPLY_APPROVED_BY does not match the record's APPROVER line"
 else
   fail_gate approval-record \
-    "invalid or missing approval record ($approval_record): it must contain 'GATE: $required_gate', the plan SHA-256 $plan_sha, commit $commit, and an APPROVER: line (a plan reviewed against the MYSQL-NSG-RETEST policy always requires GATE: MYSQL-NSG-RETEST)"
+    "invalid or missing approval record ($approval_record): it must contain 'GATE: $required_gate', the plan SHA-256 $plan_sha, commit $commit, and an APPROVER: line (a plan reviewed against the MYSQL-NSG-RETEST policy always requires GATE: MYSQL-NSG-RETEST, and a plan reviewed against the SSH-SOURCE-UPDATE policy always requires GATE: SSH-SOURCE-UPDATE — the general PLATFORM-APPLY record never authorizes either dedicated gate)"
 fi
 
 # Live guards -----------------------------------------------------------------
@@ -191,6 +195,56 @@ if [[ "$retest_gate" -eq 1 ]]; then
       || fail_gate retest-live-before "live nsg_ids=[$live_nsgs] do not match the reviewed before-value [$expected_before] — the plan is stale; re-plan and re-review (state reconciliation, if needed, is a separate approved package)"
   else
     fail_gate retest-live-before "live MySQL db-system GET failed (see logs/retest-live-mysql.err) — not treated as absence"
+  fi
+fi
+
+# Dedicated SSH-SOURCE-UPDATE contract (mirrors the MYSQL-NSG-RETEST gate):
+# the saved plan is revalidated offline against the dedicated policy and the
+# live break-glass SSH rule must still hold exactly the reviewed before-value
+# source immediately before execution — the 2026-10-29 audit deviation (apply
+# consumed a general PLATFORM-APPLY record with no SSH-specific recheck) is
+# closed for every future rotation.
+if [[ "$ssh_update_gate" -eq 1 ]]; then
+  ssh_recheck_json="$M1_EVIDENCE_DIR/state/ssh-update-plan-recheck.json"
+  "$M1_TERRAFORM_BIN" -chdir="$root" show -json "$plan_file" > "$ssh_recheck_json" \
+    2>"$M1_EVIDENCE_DIR/logs/ssh-update-plan-recheck-show.err" \
+    || fail_gate ssh-update-contract "could not render the saved plan for the SSH-SOURCE-UPDATE recheck"
+  chmod 600 "$ssh_recheck_json"
+
+  # Offline: the saved plan matches the dedicated policy (exactly one
+  # ssh_from_operator source update, before/after values as reviewed, nothing else).
+  if "$M1_REPO_ROOT/scripts/ci/assert-safe-plan-scope-a.sh" --policy "$M1_REPO_ROOT/$M1_SSH_UPDATE_POLICY" "$ssh_recheck_json" \
+       >"$M1_EVIDENCE_DIR/logs/ssh-update-contract.log" 2>&1; then
+    m1_check PASS "ssh-update-plan-contract" "saved plan revalidated: exactly the reviewed one-rule /32 source update"
+  else
+    cat "$M1_EVIDENCE_DIR/logs/ssh-update-contract.log" >&2
+    fail_gate ssh-update-plan-contract "the saved plan does not match the dedicated SSH-SOURCE-UPDATE policy — REFUSING to execute"
+  fi
+
+  # Expected before/after values, read from the reviewed policy itself.
+  expected_before="$(jq -r '.allow[0].expected_attribute_values_before.source' "$M1_REPO_ROOT/$M1_SSH_UPDATE_POLICY")"
+  expected_after="$(jq -r '.allow[0].expected_attribute_values.source' "$M1_REPO_ROOT/$M1_SSH_UPDATE_POLICY")"
+  plan_before="$(jq -r '[.resource_changes[]? | select(.address == "oci_core_network_security_group_security_rule.ssh_from_operator")][0].change.before.source // empty' "$ssh_recheck_json")"
+  plan_after="$(jq -r '[.resource_changes[]? | select(.address == "oci_core_network_security_group_security_rule.ssh_from_operator")][0].change.after.source // empty' "$ssh_recheck_json")"
+  rule_id="$(jq -r '[.resource_changes[]? | select(.address == "oci_core_network_security_group_security_rule.ssh_from_operator")][0].change.before.id // .change.after.id // empty' "$ssh_recheck_json")"
+  rule_nsg="$(jq -r '[.resource_changes[]? | select(.address == "oci_core_network_security_group_security_rule.ssh_from_operator")][0].change.before.network_security_group_id // .change.after.network_security_group_id // empty' "$ssh_recheck_json")"
+  [[ -n "$rule_id" && -n "$rule_nsg" ]] \
+    && m1_check PASS "ssh-update-target" "SSH rule $rule_id in NSG ${rule_nsg##*.}" \
+    || fail_gate ssh-update-target "plan names no SSH rule id/NSG — cannot bind the live precondition"
+  [[ "$plan_before" == "$expected_before" && "$plan_after" == "$expected_after" ]] \
+    && m1_check PASS "ssh-update-plan-values" "plan source before=[$expected_before] after=[$expected_after] as reviewed" \
+    || fail_gate ssh-update-plan-values "plan source (before=[$plan_before] after=[$plan_after]) diverges from the reviewed policy (before=[$expected_before] after=[$expected_after])"
+
+  # Live: the reviewed rule must still carry exactly the reviewed before-value
+  # source. A failed or ambiguous read fails closed — never treated as absence.
+  if read_live_rules="$(oci network nsg rules list --nsg-id "$rule_nsg" --all "${M1_OCI_REGION_ARGS[@]}" 2>"$M1_EVIDENCE_DIR/logs/ssh-update-live-rules.err")" \
+     && jq -e . >/dev/null 2>&1 <<<"$read_live_rules"; then
+    live_source="$(jq -r --arg id "$rule_id" '[.data[]? | select(.id == $id)][0]."source" // empty' <<<"$read_live_rules")"
+    [[ "$live_source" == "$expected_before" ]] \
+      && m1_check PASS "ssh-update-live-before" "live rule source=[$expected_before] matches the reviewed before-value" \
+      || fail_gate ssh-update-live-before "live rule source=[$live_source] (rule $rule_id) does not match the reviewed before-value [$expected_before] — the plan is stale; re-plan and re-review"
+  else
+    fail_gate ssh-update-live-before "live NSG rule listing failed (see logs/ssh-update-live-rules.err) — not treated as absence"
   fi
 fi
 
