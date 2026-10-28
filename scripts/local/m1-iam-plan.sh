@@ -59,14 +59,40 @@ m1_verify_no_lock_objects "iam/" \
   && m1_check PASS "no-locks" "no remote lock objects" \
   || fail_gate no-locks "stale or live lock objects under iam/"
 
-# Expected initial state: absence must still be PROVEN. A state object,
-# historical version, or delete marker here means the root's ownership changed
-# since the reviewed baseline — STOP.
-if m1_prove_state_key_absent "$M1_IAM_KEY"; then
-  m1_check PASS "iam-key" "$M1_IAM_KEY absence proven — matches the expected initial state"
-else
-  fail_gate iam-key "$M1_IAM_KEY absence could not be proven (details above) — reconcile ownership before planning"
-fi
+# Expected initial state: absence must still be PROVEN, unless the explicit
+# exists-mode is selected (M1_IAM_EXPECT_STATE=exists) for a follow-up package
+# on the already-initialized root — then the state key must EXIST and its
+# lineage/serial are recorded in the metadata so the apply can verify the
+# state is unchanged. A probe classified as anything other than the expected
+# state (or an unexpected lineage) is a hard failure.
+expected_state_mode="${M1_IAM_EXPECT_STATE:-absent}"
+state_lineage_meta=""; state_serial_meta=0
+case "$expected_state_mode" in
+  absent)
+    if m1_prove_state_key_absent "$M1_IAM_KEY"; then
+      m1_check PASS "iam-key" "$M1_IAM_KEY absence proven — matches the expected initial state"
+    else
+      fail_gate iam-key "$M1_IAM_KEY absence could not be proven (details above) — reconcile ownership before planning"
+    fi
+    ;;
+  exists)
+    key_status="$(m1_state_key_status "$M1_IAM_KEY")"
+    if [[ "$key_status" != "exists" ]]; then
+      fail_gate iam-key "$M1_IAM_KEY presence classified '$key_status' but exists-mode requires the initialized root state — a failed/ambiguous probe is never treated either way"
+    fi
+    exists_pull="$M1_EVIDENCE_DIR/state/iam-pre-plan.tfstate"
+    if "$M1_TERRAFORM_BIN" -chdir="$root" state pull > "$exists_pull" 2>"$M1_EVIDENCE_DIR/logs/pre-plan-pull.err" && [[ -s "$exists_pull" ]]; then
+      read -r state_lineage_meta state_serial_meta <<<"$(m1_state_meta "$exists_pull")"
+      state_serial_meta="${state_serial_meta:-0}"
+      m1_check PASS "iam-key" "$M1_IAM_KEY exists (lineage=$state_lineage_meta serial=$state_serial_meta) — lineage recorded for apply-time verification"
+    else
+      fail_gate iam-key "could not pull the existing IAM state before planning"
+    fi
+    ;;
+  *)
+    fail_gate iam-key "M1_IAM_EXPECT_STATE must be 'absent' or 'exists', got: $expected_state_mode"
+    ;;
+esac
 
 # Operator OCIDs (git-ignored, reviewed per root) for the contract rendering.
 [[ -f "$tfvars" ]] || fail_gate operator-vars "$tfvars missing — operator workstation inputs are required"
@@ -129,12 +155,14 @@ jq -n \
   --arg run_tag "$M1_RUN_TAG" --arg commit "$commit" --arg operator "$operator" \
   --arg plan "$plan_file" --arg plan_json "$plan_json" --arg plan_sha "$plan_sha" \
   --arg safe_plan "$safe_plan" --argjson changes "$changes_total" \
-  --arg expected_state "absent" \
+  --arg expected_state "$expected_state_mode" \
+  --arg state_lineage "$state_lineage_meta" --argjson state_serial "$state_serial_meta" \
   --arg safe_plan_policy "$M1_IAM_PLAN_CONTRACT" \
   --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   '{plan:$plan, plan_json:$plan_json, plan_sha256:$plan_sha, commit:$commit, operator:$operator,
     safe_plan:$safe_plan, safe_plan_policy:$safe_plan_policy,
-    expected_state:$expected_state, non_noop_changes:$changes,
+    expected_state:$expected_state, state_lineage:$state_lineage, state_serial:$state_serial,
+    non_noop_changes:$changes,
     terraform_version:$tv, bucket:$bucket, state_key:$key,
     applied:false, apply_evidence:null, timestamp:$timestamp}' \
   --arg tv "$M1_TERRAFORM_VERSION" --arg bucket "$M1_TF_STATE_BUCKET" --arg key "$M1_IAM_KEY" \

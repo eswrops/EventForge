@@ -439,4 +439,202 @@ else
   echo "skip: pre-execution recheck behavioral test (operator tfvars absent — CI checkout)"
 fi
 
+# ------------------------------------------------- diagnostics approval template
+# The ENTIRE standalone committed template
+# (docs/acceptance/m1-local/approvals/iam-run-command-diag-approval.template)
+# is tested along the SAME record path the operator will supply to
+# m1-iam-diag-apply.sh — the executable offline gates, not duplicated logic.
+diag_template="$repo_root/docs/acceptance/m1-local/approvals/iam-run-command-diag-approval.template"
+diag_apply="$repo_root/scripts/local/m1-iam-diag-apply.sh"
+[[ -f "$diag_template" ]] || fail "diagnostics approval template must exist (committed)"
+# Exactly one of each marker/field in the template (no multi-gate ambiguity).
+for marker in "GATE: IAM-RUN-COMMAND-DIAG" "APPROVAL_DECISION:" "APPROVER:" "Grant phrase:" "Timestamp (UTC):" "Saved-plan SHA-256:" "Source commit:" "Policy address:" "Statement:" "IAM state lineage/serial at plan time:"; do
+  [[ "$(grep -cF "$marker" "$diag_template")" -eq 1 ]] \
+    || fail "template must carry exactly one '$marker' line (got $(grep -cF "$marker" "$diag_template"))"
+done
+grep -q '^APPROVAL_DECISION: <OPERATOR_AUTHORIZATION_REQUIRED>$' "$diag_template" \
+  || fail "template decision line must be the exact placeholder"
+grep -qF "Statement: Allow dynamic-group eventforge-instances to use instance-agent-command-execution-family" "$diag_template" \
+  || fail "template must carry the exact reviewed statement (use verb)"
+
+DIAG_STMT="$(grep -F 'Statement: ' "$diag_template" | sed 's/^Statement: //')"
+diag_tpl_sha="1111111111111111111111111111111111111111111111111111111111111111"
+diag_tpl_commit="$(git -C "$repo_root" rev-parse HEAD)"
+DIAG_LINEAGE="2d169472-160b-5f38-6141-55cb1bec880a"
+DIAG_SERIAL=1
+
+# fill_diag <out> <decision:placeholder|AUTHORIZE_ONE_DIAGNOSTIC_IAM_CREATE>
+#   <sha> <commit> <lineage> — simulates exactly the operator's deliberate edits.
+fill_diag() {
+  local out="$1" decision="$2" psha="$3" pcommit="$4" pstate="$5" line
+  : > "$out"
+  while IFS= read -r line; do
+    if [[ "$decision" != "placeholder" ]]; then
+      line="${line//APPROVAL_DECISION: <OPERATOR_AUTHORIZATION_REQUIRED>/APPROVAL_DECISION: $decision}"
+    fi
+    line="${line//<operator name>/test-operator}"
+    line="${line//<verbatim operator grant>/diag-regression-grant}"
+    line="${line//<YYYY-MM-DDTHH:MM:SSZ>/2026-10-28T23:00:00Z}"
+    line="${line//<sha256 of the exists-mode diagnostics plan>/$psha}"
+    line="${line//<full merged main commit>/$pcommit}"
+    line="${line//<lineage>\/<serial>/$pstate}"
+    printf '%s\n' "$line" >> "$out"
+  done < "$diag_template"
+}
+
+# Offline gate-sequence harness: the same checks the apply runs on the record,
+# in the same order, BEFORE any live access.
+diag_record_ok() { # <record> <sha> <commit> <lineage>/<serial>
+  m1_verify_approval_record "$1" "IAM-RUN-COMMAND-DIAG" "$2" "$3" \
+    "oci_identity_policy.instance_run_command_diagnostics" "$DIAG_STMT" \
+    && m1_verify_approval_decision "$1" "AUTHORIZE_ONE_DIAGNOSTIC_IAM_CREATE"
+}
+
+# Case 1: an unchanged copy of the committed template must FAIL.
+cp "$diag_template" "$work/diag-unchanged.md"
+if diag_record_ok "$work/diag-unchanged.md" "$diag_tpl_sha" "$diag_tpl_commit" "$DIAG_LINEAGE/$DIAG_SERIAL" 2>/dev/null; then
+  fail "an unchanged template copy must fail the approval gates"
+fi
+# Case 2: all fields filled except the decision placeholder must FAIL.
+fill_diag "$work/diag-populated.md" placeholder "$diag_tpl_sha" "$diag_tpl_commit" "$DIAG_LINEAGE/$DIAG_SERIAL"
+# every OTHER gate must accept it — only the decision refuses:
+m1_verify_approval_record "$work/diag-populated.md" "IAM-RUN-COMMAND-DIAG" "$diag_tpl_sha" "$diag_tpl_commit" \
+  "oci_identity_policy.instance_run_command_diagnostics" "$DIAG_STMT" \
+  || fail "a populated template with the placeholder unchanged must satisfy the approval-record gate"
+m1_verify_approval_decision "$work/diag-populated.md" "AUTHORIZE_ONE_DIAGNOSTIC_IAM_CREATE" 2>/dev/null \
+  && fail "a populated template with the placeholder unchanged must fail the decision gate"
+# Case 3: valid decision + placeholder approver must FAIL (attribution check).
+fill_diag "$work/diag-tpl-approver.md" AUTHORIZE_ONE_DIAGNOSTIC_IAM_CREATE "$diag_tpl_sha" "$diag_tpl_commit" "$DIAG_LINEAGE/$DIAG_SERIAL"
+# (the simulated attribution values below are the template's own placeholders —
+#  the apply extracts the fields from the record and refuses fill markers)
+record_approver="<operator name>"; record_grant="diag-regression-grant"; record_ts="2026-10-28T23:00:00Z"
+attr_fail=""; for fv in "$record_approver" "$record_grant" "$record_ts"; do
+  [[ -z "$fv" || "$fv" == *'<'* || "$fv" == *'>'* ]] && attr_fail=x; done
+[[ -n "$attr_fail" ]] || fail "placeholder approver must trip the attribution check"
+# Case 4: valid decision + placeholder grant must FAIL.
+record_approver="test-operator"; record_grant="<verbatim operator grant>"
+attr_fail=""; for fv in "$record_approver" "$record_grant" "$record_ts"; do
+  [[ -z "$fv" || "$fv" == *'<'* || "$fv" == *'>'* ]] && attr_fail=x; done
+[[ -n "$attr_fail" ]] || fail "placeholder grant must trip the attribution check"
+# Case 5: valid decision + placeholder timestamp must FAIL.
+record_grant="diag-regression-grant"; record_ts="<YYYY-MM-DDTHH:MM:SSZ>"
+attr_fail=""; for fv in "$record_approver" "$record_grant" "$record_ts"; do
+  [[ -z "$fv" || "$fv" == *'<'* || "$fv" == *'>'* ]] && attr_fail=x; done
+[[ "$record_ts" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || attr_fail=x
+[[ -n "$attr_fail" ]] || fail "placeholder timestamp must trip the attribution check"
+# Case 6: duplicate decision must FAIL.
+fill_diag "$work/diag-dup.md" AUTHORIZE_ONE_DIAGNOSTIC_IAM_CREATE "$diag_tpl_sha" "$diag_tpl_commit" "$DIAG_LINEAGE/$DIAG_SERIAL"
+printf 'APPROVAL_DECISION: AUTHORIZE_ONE_DIAGNOSTIC_IAM_CREATE\n' >> "$work/diag-dup.md"
+if m1_verify_approval_decision "$work/diag-dup.md" "AUTHORIZE_ONE_DIAGNOSTIC_IAM_CREATE" 2>/dev/null; then
+  fail "a duplicate decision must be refused"
+fi
+# Case 7 (behavioral, full offline path): a valid complete record PASSES the
+# executable apply gates end-to-end with stubbed terraform/oci — no live OCI.
+if [[ -f "$repo_root/infra/iam/terraform.auto.tfvars" && -f "$repo_root/infra/iam/backend.hcl" ]]; then
+  printf 'placeholder-plan-body' > "$work/diag-plan.tfplan"
+  diag_plan_sha="$(shasum -a 256 "$work/diag-plan.tfplan" | awk '{print $1}')"
+  db_ocid="$(awk -F'"' '/^[[:space:]]*db_compartment_ocid[[:space:]]*=/{print $2}' "$repo_root/infra/iam/terraform.auto.tfvars")"
+  mapfile -t diag_stmts < <("$repo_root/scripts/ci/assert-iam-plan.sh" \
+    --policy "$repo_root/scripts/ci/iam-plan-contract-diag.json" \
+    --var "db_compartment_ocid=$db_ocid" --print-statements)
+  [[ "${#diag_stmts[@]}" -eq 1 ]] || fail "expected 1 rendered diag statement"
+  fill_diag "$work/diag-record.md" AUTHORIZE_ONE_DIAGNOSTIC_IAM_CREATE "$diag_plan_sha" "$diag_tpl_commit" "$DIAG_LINEAGE/$DIAG_SERIAL"
+  jq -n --arg plan "$work/diag-plan.tfplan" --arg sha "$diag_plan_sha" --arg commit "$diag_tpl_commit" \
+    --arg lineage "$DIAG_LINEAGE" --argjson serial "$DIAG_SERIAL" \
+    '{plan:$plan, plan_sha256:$sha, commit:$commit, safe_plan:"PASS",
+      safe_plan_policy:"scripts/ci/iam-plan-contract-diag.json",
+      expected_state:"exists", state_lineage:$lineage, state_serial:$serial,
+      applied:false}' > "$work/diag-metadata.json"
+  # plan JSON the stub `terraform show -json` renders — must pass the diag contract
+  jq -n --arg ocid "$db_ocid" --arg stmt "${diag_stmts[0]}" \
+    '{resource_changes:[{address:"oci_identity_policy.instance_run_command_diagnostics",
+       type:"oci_identity_policy",
+       change:{actions:["create"],before:null,
+         after:{name:"eventforge-instance-run-command-diagnostics",compartment_id:$ocid,statements:[$stmt]},
+         after_unknown:{id:true,defined_tags:{},freeform_tags:{}}}}]}' > "$work/diag-recheck.json"
+  jq -n --arg lineage "$DIAG_LINEAGE" --argjson serial "$DIAG_SERIAL" \
+    '{lineage:$lineage, serial:$serial, resources:[
+       {mode:"managed",type:"oci_identity_policy",name:"mysql_nsg_membership"},
+       {mode:"managed",type:"oci_identity_policy",name:"mysql_vnic_update"},
+       {mode:"managed",type:"oci_identity_policy",name:"instance_run_command_diagnostics"}]}' \
+    > "$work/diag-state.json"
+  cp "$work/diag-metadata.json" "$work/diag-metadata-pristine.json"
+  tf_stub="$work/diag-tf-bin"; mkdir -p "$tf_stub"
+  printf '#!/bin/sh\nargs=""\nfor a in "$@"; do\n  case "$a" in -chdir=*) ;; *) args="$args $a" ;; esac\ndone\nset -- $args\ncase "$1 $2" in\n  "version "*) echo "Terraform v1.12.2"; echo "on darwin_arm64";;\n  "workspace show") echo "default";;\n  "show -json") cat "%s";;\n  "state pull") cat "%s";;\n  apply*) exit 0;;\n  *) echo "unexpected terraform call: $*" >&2; exit 70;;\nesac\n' \
+    "$work/diag-recheck.json" "$work/diag-state.json" > "$tf_stub/terraform"
+  chmod +x "$tf_stub/terraform"
+  oci_stub2="$work/diag-oci-bin"; mkdir -p "$oci_stub2"
+  cat > "$oci_stub2/oci" <<OCIEOF
+#!/bin/sh
+case "\$1 \$2" in
+  "os bucket"*) echo '{"data":{"public-access-type":"NoPublicAccess","versioning":"Enabled","kms-key-id":"$M1_EXPECTED_KMS_KEY_ID"}}' ;;
+  "kms management"*) echo '{"data":{"lifecycle-state":"ENABLED"}}' ;;
+  *) exit 0 ;;
+esac
+OCIEOF
+  chmod +x "$oci_stub2/oci"
+  if M1_TERRAFORM_BIN="$tf_stub/terraform" PATH="$oci_stub2:$PATH" \
+     M1_IAM_DIAG_APPLY_APPROVED_BY="test-operator" M1_EVIDENCE_DIR="$work/diag-evidence" \
+     bash "$diag_apply" "$work/diag-plan.tfplan" "$work/diag-metadata.json" "$work/diag-record.md" \
+     >"$work/diag-apply.out" 2>"$work/diag-apply.err"; then
+    grep -q 'PASS  terraform-apply' "$work/diag-apply.out" || { cat "$work/diag-apply.out" >&2; fail "behavioral diag apply must PASS terraform-apply"; }
+    grep -q 'PASS  offline-contract-recheck' "$work/diag-apply.out" || fail "behavioral diag apply must PASS the offline contract recheck"
+    grep -q 'exactly 3 oci_identity_policy' "$work/diag-apply.out" || fail "behavioral diag apply must verify 3 policies post-apply"
+  else
+    cat "$work/diag-apply.err" >&2; cat "$work/diag-apply.out" >&2
+    fail "a valid complete diagnostics record must pass the executable apply path"
+  fi
+  # Case 8: wrong plan SHA fails.
+  cp "$work/diag-metadata-pristine.json" "$work/diag-metadata.json"
+  jq '.plan_sha256 = "0000wrong"' "$work/diag-metadata.json" > "$work/diag-meta-badsha.json"
+  if M1_TERRAFORM_BIN="$tf_stub/terraform" PATH="$oci_stub2:$PATH" \
+     M1_IAM_DIAG_APPLY_APPROVED_BY="test-operator" M1_EVIDENCE_DIR="$work/diag-evidence" \
+     bash "$diag_apply" "$work/diag-plan.tfplan" "$work/diag-meta-badsha.json" "$work/diag-record.md" 2>"$work/e8"; then
+    fail "a wrong plan SHA must be refused"
+  fi
+  grep -q "metadata-plan-sha" "$work/e8" || fail "wrong-SHA refusal must name the gate"
+  # Case 9: wrong commit fails.
+  cp "$work/diag-metadata-pristine.json" "$work/diag-metadata.json"
+  jq '.commit = "0000wrongcommit"' "$work/diag-metadata.json" > "$work/diag-meta-badcommit.json"
+  if M1_TERRAFORM_BIN="$tf_stub/terraform" PATH="$oci_stub2:$PATH" \
+     M1_IAM_DIAG_APPLY_APPROVED_BY="test-operator" M1_EVIDENCE_DIR="$work/diag-evidence" \
+     bash "$diag_apply" "$work/diag-plan.tfplan" "$work/diag-meta-badcommit.json" "$work/diag-record.md" 2>"$work/e9"; then
+    fail "a wrong commit must be refused"
+  fi
+  grep -q "metadata-commit" "$work/e9" || fail "wrong-commit refusal must name the gate"
+  # Case 10: wrong policy statement fails (record statement altered).
+  sed 's/use instance-agent-command-execution-family/manage instance-agent-command-execution-family/' \
+    "$work/diag-record.md" > "$work/diag-record-badstmt.md"
+  if M1_TERRAFORM_BIN="$tf_stub/terraform" PATH="$oci_stub2:$PATH" \
+     M1_IAM_DIAG_APPLY_APPROVED_BY="test-operator" M1_EVIDENCE_DIR="$work/diag-evidence" \
+     bash "$diag_apply" "$work/diag-plan.tfplan" "$work/diag-metadata.json" "$work/diag-record-badstmt.md" 2>"$work/e10"; then
+    fail "a wrong policy statement must be refused"
+  fi
+  grep -q "approval-record" "$work/e10" || fail "wrong-statement refusal must name the approval-record gate"
+  # Case 11: wrong state lineage/serial fails (record binding).
+  fill_diag "$work/diag-record-badstate.md" AUTHORIZE_ONE_DIAGNOSTIC_IAM_CREATE "$diag_plan_sha" "$diag_tpl_commit" "0000wrong-lineage/99"
+  if M1_TERRAFORM_BIN="$tf_stub/terraform" PATH="$oci_stub2:$PATH" \
+     M1_IAM_DIAG_APPLY_APPROVED_BY="test-operator" M1_EVIDENCE_DIR="$work/diag-evidence" \
+     bash "$diag_apply" "$work/diag-plan.tfplan" "$work/diag-metadata.json" "$work/diag-record-badstate.md" 2>"$work/e11"; then
+    fail "a wrong record-bound state lineage/serial must be refused"
+  fi
+  grep -q "record-state-binding" "$work/e11" || fail "wrong-lineage refusal must name the record-state-binding gate"
+  # Case 12 (consumed metadata) — same executable path.
+  cp "$work/diag-metadata-pristine.json" "$work/diag-metadata.json"
+  jq '.applied = true' "$work/diag-metadata.json" > "$work/diag-meta-consumed.json"
+  if M1_TERRAFORM_BIN="$tf_stub/terraform" PATH="$oci_stub2:$PATH" \
+     M1_IAM_DIAG_APPLY_APPROVED_BY="test-operator" M1_EVIDENCE_DIR="$work/diag-evidence" \
+     bash "$diag_apply" "$work/diag-plan.tfplan" "$work/diag-meta-consumed.json" "$work/diag-record.md" 2>"$work/e12"; then
+    fail "consumed metadata must be refused"
+  fi
+  grep -q "metadata-not-applied" "$work/e12" || fail "consumed-metadata refusal must name the gate"
+else
+  echo "skip: diagnostics behavioral integration (operator tfvars/backend absent — CI checkout)"
+fi
+# Case 12b: existing two-policy guards remain unchanged.
+"$repo_root/tests/ci/test-iam-plan-guard.sh" >/dev/null 2>&1 || fail "two-policy contract fixtures must still pass"
+"$repo_root/tests/ci/test-iam-plan-guard-diag.sh" >/dev/null 2>&1 || fail "diag contract fixtures must still pass"
+echo "ok: diagnostics approval template integration (standalone template + executable path)"
+
+
 echo "IAM local guard tests passed"
