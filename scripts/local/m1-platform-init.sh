@@ -50,29 +50,39 @@ fi
 m1_check PASS "local-state" "no pre-existing local platform state"
 
 # Pre-existing remote state -------------------------------------------------
-if m1_object_exists "$M1_PLATFORM_KEY"; then
-  snapshot="$M1_EVIDENCE_DIR/state/platform-pre-existing-$M1_RUN_TAG.tfstate"
-  if oci os object get --bucket-name "$M1_TF_STATE_BUCKET" --name "$M1_PLATFORM_KEY" \
-       --file "$snapshot" "${M1_OCI_REGION_ARGS[@]}" >/dev/null 2>&1 && [[ -s "$snapshot" ]]; then
-    chmod 600 "$snapshot"
-    read -r live_lineage live_serial <<<"$(m1_state_meta "$snapshot")"
-    m1_evidence_record "existing platform state snapshot saved lineage=$live_lineage serial=$live_serial"
-    # Not env-var-only: the operator must also present a written acknowledgement
-    # record naming the live lineage after reviewing the snapshot.
-    ack_record="${M1_EXISTING_STATE_ACK:-}"
-    if [[ "${M1_ALLOW_EXISTING_STATE:-}" == "$live_lineage" && -n "$ack_record" ]] \
-       && m1_verify_approval_record "$ack_record" "PLATFORM-INIT-EXISTING-STATE" "$live_lineage"; then
-      m1_check PASS "platform-key" "existing state acknowledged by operator record: $live_lineage serial=$live_serial (no migration flags used)"
+# Presence is classified: an authorization failure, service error, timeout, or
+# unparseable response is NEVER treated as a fresh-state proof.
+platform_key_status="$(m1_state_key_status "$M1_PLATFORM_KEY")"
+case "$platform_key_status" in
+  exists)
+    snapshot="$M1_EVIDENCE_DIR/state/platform-pre-existing-$M1_RUN_TAG.tfstate"
+    if oci os object get --bucket-name "$M1_TF_STATE_BUCKET" --name "$M1_PLATFORM_KEY" \
+         --file "$snapshot" "${M1_OCI_REGION_ARGS[@]}" >/dev/null 2>&1 && [[ -s "$snapshot" ]]; then
+      chmod 600 "$snapshot"
+      read -r live_lineage live_serial <<<"$(m1_state_meta "$snapshot")"
+      m1_evidence_record "existing platform state snapshot saved lineage=$live_lineage serial=$live_serial"
+      # Not env-var-only: the operator must also present a written acknowledgement
+      # record naming the live lineage after reviewing the snapshot.
+      ack_record="${M1_EXISTING_STATE_ACK:-}"
+      if [[ "${M1_ALLOW_EXISTING_STATE:-}" == "$live_lineage" && -n "$ack_record" ]] \
+         && m1_verify_approval_record "$ack_record" "PLATFORM-INIT-EXISTING-STATE" "$live_lineage"; then
+        m1_check PASS "platform-key" "existing state acknowledged by operator record: $live_lineage serial=$live_serial (no migration flags used)"
+      else
+        fail_gate platform-key \
+          "$M1_PLATFORM_KEY already exists (lineage=$live_lineage serial=$live_serial). Snapshot saved to $snapshot. After operator review, re-run with M1_ALLOW_EXISTING_STATE=$live_lineage and M1_EXISTING_STATE_ACK=<record file naming GATE: PLATFORM-INIT-EXISTING-STATE and that lineage>"
+      fi
     else
-      fail_gate platform-key \
-        "$M1_PLATFORM_KEY already exists (lineage=$live_lineage serial=$live_serial). Snapshot saved to $snapshot. After operator review, re-run with M1_ALLOW_EXISTING_STATE=$live_lineage and M1_EXISTING_STATE_ACK=<record file naming GATE: PLATFORM-INIT-EXISTING-STATE and that lineage>"
+      fail_gate platform-key "$M1_PLATFORM_KEY exists but could not be snapshotted — refusing to init"
     fi
-  else
-    fail_gate platform-key "$M1_PLATFORM_KEY exists but could not be snapshotted — refusing to init"
-  fi
-else
-  m1_check PASS "platform-key" "$M1_PLATFORM_KEY absent — fresh platform state"
-fi
+    ;;
+  absent)
+    m1_check PASS "platform-key" "$M1_PLATFORM_KEY authoritatively absent (service answered 404) — fresh platform state"
+    ;;
+  *)
+    fail_gate platform-key \
+      "$M1_PLATFORM_KEY presence UNKNOWN (OCI probe classified: $platform_key_status) — a failed or ambiguous response is never treated as a fresh-state proof; init refused"
+    ;;
+esac
 
 # Init (plain; never -migrate-state / -reconfigure / -force-copy) -----------
 for flag in -migrate-state -reconfigure -force-copy; do
@@ -93,12 +103,21 @@ fi
 m1_verify_workspace_default "$M1_TERRAFORM_BIN" "$root" \
   && m1_check PASS "workspace-default" "workspace is default" \
   || fail_gate workspace-default "non-default workspace"
-if m1_object_exists "$M1_PLATFORM_KEY"; then
-  m1_check FAIL "init-wrote-nothing" "init unexpectedly created $M1_PLATFORM_KEY"
-  m1_exit_gate_failed
-else
-  m1_check PASS "init-wrote-nothing" "no remote state object written by init"
-fi
+init_wrote_status="$(m1_state_key_status "$M1_PLATFORM_KEY")"
+case "$init_wrote_status" in
+  absent)
+    m1_check PASS "init-wrote-nothing" "no remote state object written by init"
+    ;;
+  exists)
+    m1_check FAIL "init-wrote-nothing" "init unexpectedly created $M1_PLATFORM_KEY"
+    m1_exit_gate_failed
+    ;;
+  *)
+    m1_check FAIL "init-wrote-nothing" \
+      "cannot confirm init wrote nothing (OCI probe classified: $init_wrote_status) — a failed or ambiguous response is never treated as absence"
+    m1_exit_gate_failed
+    ;;
+esac
 
 count="$("$M1_TERRAFORM_BIN" -chdir="$root" state list 2>/dev/null | grep -c . || true)"
 [[ "${count:-0}" -eq 0 ]] \

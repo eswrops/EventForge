@@ -22,6 +22,7 @@ state_pull="$M1_EVIDENCE_DIR/state/platform-verify-pull.tfstate"
 # always assigns (empty on failure).
 nsg_list_json="" one_rules_json="" rules_json="" vm_json="" mysql_json=""
 lb_json="" lb_get_json="" alarms_json="" budgets_json="" alerts_json=""
+mysql_live_nsg_json=""
 
 fail_gate() { m1_check FAIL "$1" "${*:2}"; m1_evidence_record "GATE FAIL: $1"; }
 note() { printf 'NOTE  %s\n' "$*"; }
@@ -226,44 +227,103 @@ if [[ "$live_ready" -eq 1 ]]; then
 fi
 
 # 10–11. Terraform state inventory ----------------------------------------------------
-if m1_object_exists "$M1_PLATFORM_KEY"; then
-  if "$M1_TERRAFORM_BIN" -chdir="$root" state pull > "$state_pull" 2>"$M1_EVIDENCE_DIR/logs/verify-pull.err" && [[ -s "$state_pull" ]]; then
-    read -r lineage serial <<<"$(m1_state_meta "$state_pull")"
-    m1_check PASS "state-readable" "lineage=$lineage serial=$serial"
-    "$M1_TERRAFORM_BIN" -chdir="$root" state list > "$M1_EVIDENCE_DIR/state/platform-addresses.txt" 2>/dev/null
-    addresses="$(grep -c . "$M1_EVIDENCE_DIR/state/platform-addresses.txt" || true)"
-    m1_check PASS "state-inventory" "$addresses addresses recorded in evidence"
-    if grep -q '^oci_core_vcn\.existing$' "$M1_EVIDENCE_DIR/state/platform-addresses.txt"; then
-      m1_check PASS "imports-present" "imported VCN found in state"
+# The key's presence is CLASSIFIED, never guessed: a failed or ambiguous OCI
+# HEAD (auth/service/timeout/malformed) is never interpreted as absence, and
+# for the established platform deployment (live coordinates configured) a
+# genuinely absent state key is a hard failure, not "pending imports".
+platform_key_status="$(m1_state_key_status "$M1_PLATFORM_KEY")"
+state_pull_ok=0
+case "$platform_key_status" in
+  exists)
+    if "$M1_TERRAFORM_BIN" -chdir="$root" state pull > "$state_pull" 2>"$M1_EVIDENCE_DIR/logs/verify-pull.err" && [[ -s "$state_pull" ]]; then
+      state_pull_ok=1
+      read -r lineage serial <<<"$(m1_state_meta "$state_pull")"
+      m1_check PASS "state-readable" "lineage=$lineage serial=$serial"
+      "$M1_TERRAFORM_BIN" -chdir="$root" state list > "$M1_EVIDENCE_DIR/state/platform-addresses.txt" 2>/dev/null
+      addresses="$(grep -c . "$M1_EVIDENCE_DIR/state/platform-addresses.txt" || true)"
+      m1_check PASS "state-inventory" "$addresses addresses recorded in evidence"
+      if grep -q '^oci_core_vcn\.existing$' "$M1_EVIDENCE_DIR/state/platform-addresses.txt"; then
+        m1_check PASS "imports-present" "imported VCN found in state"
+      else
+        note "imports not yet in state — import phases pending"
+      fi
+      if grep -Eq '^oci_load_balancer_(backend_set|listener|certificate)|^cloudflare_dns_record|^tls_private_key' "$M1_EVIDENCE_DIR/state/platform-addresses.txt"; then
+        fail_gate ingress-resources "API-ingress resources found in state while enable_api_ingress must stay false"
+      else
+        m1_check PASS "ingress-disabled" "no API certificate/listener/backend/DNS resources in state"
+      fi
     else
-      note "imports not yet in state — import phases pending"
+      fail_gate state-readable "could not pull platform state"
     fi
-    if grep -Eq '^oci_load_balancer_(backend_set|listener|certificate)|^cloudflare_dns_record|^tls_private_key' "$M1_EVIDENCE_DIR/state/platform-addresses.txt"; then
-      fail_gate ingress-resources "API-ingress resources found in state while enable_api_ingress must stay false"
+    ;;
+  absent)
+    if [[ "$live_ready" -eq 1 ]]; then
+      fail_gate state-readable \
+        "platform state key $M1_PLATFORM_KEY is ABSENT while the platform deployment is established (live coordinates configured) — absence of an established platform state is a hard failure, never 'pending imports'"
     else
-      m1_check PASS "ingress-disabled" "no API certificate/listener/backend/DNS resources in state"
+      note "platform state key absent — state checks pending imports"
     fi
+    ;;
+  *)
+    fail_gate state-readable \
+      "platform state presence UNKNOWN (OCI probe classified: $platform_key_status) — a failed or ambiguous response is never treated as absence; resolve auth/service/timeout before verifying"
+    ;;
+esac
+
+# Independent read-only state-vs-live NSG comparison (drift-repair Phase 2):
+# the RAW pulled state (not the plan's prior_state) is compared against the
+# live db-system GET. Any disagreement is a hard failure — this is the gate
+# that catches exactly the stale MySQL nsg_ids finding of 2026-10-27.
+if [[ "$state_pull_ok" -eq 1 && "$live_ready" -eq 1 ]]; then
+  mysql_state_id="$(jq -r '
+    [ .resources[]?
+      | select(.mode == "managed" and .type == "oci_mysql_mysql_db_system" and .name == "existing")
+      | .instances[0].attributes.id ][0] // empty' "$state_pull")"
+  if [[ -z "$mysql_state_id" ]]; then
+    fail_gate mysql-nsg-state-vs-live "MySQL db system missing from raw platform state — cannot verify state/live agreement"
+  elif read_oci_json mysql_live_nsg_json mysql db-system get --db-system-id "$mysql_state_id"; then
+    nsg_agreement="$(m1_mysql_nsg_state_live_agree "$state_pull" "$mysql_live_nsg_json")"
+    case $? in
+      0) m1_check PASS "mysql-nsg-state-vs-live" "raw state and live MySQL nsg_ids agree ($nsg_agreement)" ;;
+      1) fail_gate mysql-nsg-state-vs-live "RAW STATE vs LIVE NSG MISMATCH: $nsg_agreement — state reconciliation is required through a separately approved state-only package (never automatic)" ;;
+      *) fail_gate mysql-nsg-state-vs-live "state/live nsg_ids comparison could not be evaluated (unparseable input) — failing closed" ;;
+    esac
   else
-    fail_gate state-readable "could not pull platform state"
+    fail_gate mysql-nsg-state-vs-live "live MySQL db-system GET failed — not treated as absence"
   fi
-else
-  note "platform state key absent — state checks pending imports"
 fi
 
 # Read-only drift assessment -----------------------------------------------------------
-if [[ "$live_ready" -eq 1 && -d "$root/.terraform" ]] && m1_object_exists "$M1_PLATFORM_KEY"; then
-  drift_plan="$M1_EVIDENCE_DIR/plans/verify-refresh-only.json"
-  if "$M1_TERRAFORM_BIN" -chdir="$root" plan -refresh-only -input=false -lock=true -out="$M1_EVIDENCE_DIR/plans/verify-refresh-only.tfplan" \
-       >"$M1_EVIDENCE_DIR/logs/verify-refresh.log" 2>&1 \
-     && "$M1_TERRAFORM_BIN" -chdir="$root" show -json "$M1_EVIDENCE_DIR/plans/verify-refresh-only.tfplan" > "$drift_plan" 2>/dev/null; then
-    drift="$(jq -r '(.resource_changes // [])[] | select(.change.actions != ["no-op"]) | "\(.address): \(.change.actions | join(","))"' "$drift_plan")"
-    if [[ -z "$drift" ]]; then
+# resource_drift is inspected EXPLICITLY after validating the plan structure:
+# an empty resource_changes array never proves "clean". Protected imported
+# resources must never drift (CRITICAL); provider-computed budget values are
+# acknowledged drift; anything else is UNKNOWN. CRITICAL/UNKNOWN fail.
+if [[ "$live_ready" -eq 1 && -d "$root/.terraform" ]]; then
+  if [[ "$platform_key_status" == "exists" ]]; then
+    drift_plan="$M1_EVIDENCE_DIR/plans/verify-refresh-only.json"
+    plan_stage=""
+    plan_ok=1
+    if ! "$M1_TERRAFORM_BIN" -chdir="$root" plan -refresh-only -input=false -lock=true -out="$M1_EVIDENCE_DIR/plans/verify-refresh-only.tfplan" \
+         >"$M1_EVIDENCE_DIR/logs/verify-refresh.log" 2>&1; then
+      plan_ok=0 plan_stage="terraform plan -refresh-only failed"
+    elif ! "$M1_TERRAFORM_BIN" -chdir="$root" show -json "$M1_EVIDENCE_DIR/plans/verify-refresh-only.tfplan" > "$drift_plan" 2>/dev/null; then
+      plan_ok=0 plan_stage="plan JSON rendering failed"
+    elif ! m1_plan_structure_ok "$drift_plan"; then
+      plan_ok=0 plan_stage="plan JSON is invalid or not the expected plan structure"
+    fi
+    if [[ "$plan_ok" -eq 0 ]]; then
+      fail_gate drift "refresh-only plan could not be produced or validated ($plan_stage) — see logs/verify-refresh.log"
+    elif ! drift_report="$(m1_classify_drift "$drift_plan" "$M1_REPO_ROOT/$M1_SAFE_PLAN_POLICY")"; then
+      fail_gate drift "drift classification failed (plan/policy unreadable) — failing closed"
+    elif [[ -z "$drift_report" ]]; then
       m1_check PASS "drift" "refresh-only reconciliation: clean"
+    elif grep -q $'^CRITICAL\t\|^UNKNOWN\t' <<<"$drift_report"; then
+      fail_gate drift "UNACCEPTABLE DRIFT (CRITICAL/UNKNOWN — investigate line-by-line, never auto-correct):"$'\n'"$drift_report"
     else
-      fail_gate drift "drift reported (investigate line-by-line, never auto-correct):"$'\n'"$drift"
+      m1_check PASS "drift" "acknowledged computed drift only (reported, never silent zero):"$'\n'"$drift_report"
     fi
   else
-    fail_gate drift "refresh-only plan could not be produced (see logs/verify-refresh.log)"
+    note "drift assessment skipped — platform state not confirmed present (classified: $platform_key_status)"
   fi
 else
   note "drift assessment pending platform init/imports"

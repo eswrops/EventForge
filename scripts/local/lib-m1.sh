@@ -135,6 +135,147 @@ m1_object_exists() { # m1_object_exists <key> → 0 if object present
   oci os object head --bucket-name "$M1_TF_STATE_BUCKET" --name "$1" "${M1_OCI_REGION_ARGS[@]}" >/dev/null 2>&1
 }
 
+# Classify a platform state-key probe WITHOUT ever interpreting a failed HEAD
+# request as absence (platform-drift-verification-repair, Phase 3). Prints
+# exactly one word on stdout:
+#   exists    — the object is present
+#   absent    — the service authoritatively answered 404 for the exact key
+#   auth      — authorization/authentication failure (401/403)
+#   service   — OCI service error (5xx, throttling)
+#   timeout   — connectivity failure or request timeout
+#   malformed — unparseable or unclassifiable response
+# Callers must fail closed on every classification other than exists/absent.
+m1_state_key_status() { # m1_state_key_status <key>
+  local key="$1" err rc status
+  err="$(mktemp "${TMPDIR:-/tmp}/m1-head-XXXXXX")" || return 1
+  rc=0
+  oci os object head --bucket-name "$M1_TF_STATE_BUCKET" --name "$key" \
+    "${M1_OCI_REGION_ARGS[@]}" >/dev/null 2>"$err" || rc=$?
+  if [[ "$rc" -eq 0 ]]; then
+    rm -f "$err"
+    printf 'exists\n'
+    return 0
+  fi
+  # The CLI renders service errors as a JSON body on stderr carrying "status".
+  status="$(sed -n 's/.*"status"[[:space:]]*:[[:space:]]*\([0-9][0-9][0-9]\).*/\1/p' "$err" | tail -1)"
+  case "$status" in
+    404) printf 'absent\n' ;;
+    401|403) printf 'auth\n' ;;
+    5??|429) printf 'service\n' ;;
+    4??) printf 'malformed\n' ;;
+    *)
+      # No HTTP status at all: a connectivity failure/timeout (never absence)
+      # or an unparseable error body.
+      if grep -Eqi 'timed out|could not connect|connection (reset|refused|timed)|unreachable|resolve host|refused' "$err"; then
+        printf 'timeout\n'
+      else
+        printf 'malformed\n'
+      fi
+      ;;
+  esac
+  rm -f "$err"
+}
+
+# A retest (or any platform) plan must be produced by a NORMAL refreshing
+# plan: -refresh=false hides live drift from the reviewed plan and
+# -refresh-only would turn the apply into a state-only reconciliation.
+m1_verify_refreshing_plan() { # m1_verify_refreshing_plan <plan args...>
+  local arg
+  for arg in "$@"; do
+    case "$arg" in
+      -refresh=false|--refresh=false|-refresh-only|--refresh-only)
+        echo "A normal refreshing plan is required; '$arg' is refused (it would hide live state from the reviewed plan)" >&2
+        return 1 ;;
+    esac
+  done
+  local value="${TF_CLI_ARGS_plan:-}"
+  if grep -Eq -- '-refresh(=false|-only)' <<<"$value"; then
+    echo "TF_CLI_ARGS_plan alters refresh behavior: $value" >&2
+    return 1
+  fi
+}
+
+# Validate a refresh-only plan JSON before any drift evaluation: valid JSON,
+# rendered without error, and the expected Terraform plan structure. Terraform
+# 1.12 OMITS empty resource_changes/resource_drift/output_changes keys, so an
+# omitted collection is treated as empty — but a key that IS present must have
+# the correct type. A truncated document or a mistyped key must never read as
+# "zero drift".
+m1_plan_structure_ok() { # m1_plan_structure_ok <plan-json>
+  jq -e '
+    type == "object" and
+    (.format_version | type == "string") and
+    (.errored == false) and
+    (.prior_state | type == "object") and
+    (((.resource_changes? // []) | type) == "array") and
+    (((.resource_drift? // []) | type) == "array") and
+    (((.output_changes? // {}) | type) == "object")
+  ' "$1" >/dev/null 2>&1
+}
+
+# Classify every drift entry of a refresh-only plan JSON (platform-drift-
+# verification-repair, Phase 2). resource_drift is inspected EXPLICITLY — an
+# empty resource_changes array never proves the absence of drift. Prints TSV
+# lines "CLASS<TAB>address<TAB>detail" and nothing when the plan is clean:
+#   CRITICAL          — drift on a protected imported resource (its state must
+#                       always mirror the reviewed live resource; includes the
+#                       MySQL nsg_ids case)
+#   EXPECTED_COMPUTED — read-only provider-computed values only (budget actual/
+#                       forecasted spend and its computation timestamps)
+#   UNKNOWN           — any other drift, and any non-no-op resource_changes
+#                       entry (unexpected in a refresh-only plan)
+# The caller decides the verdict; CRITICAL and UNKNOWN must fail acceptance.
+m1_classify_drift() { # m1_classify_drift <plan-json> <safe-plan-policy-json>
+  local plan_json="$1" policy_json="$2"
+  jq -r --slurpfile policy "$policy_json" '
+    def changed_attrs:
+      (.change.before // {}) as $b | (.change.after // {}) as $a |
+      [ ((($b | keys_unsorted? // []) + ($a | keys_unsorted? // [])) | unique[])
+        | select(($b[.]) != ($a[.])) ];
+    def is_protected:
+      # Bind the pattern explicitly: `select($a | test(.))` would evaluate the
+      # argument `.` against $a itself and match everything.
+      .address as $a
+      | [$policy[0].protected_imports[] as $pattern | select($a | test($pattern))]
+      | length > 0;
+    ([.resource_changes[]? | select(.change.actions != ["no-op"])
+      | ["UNKNOWN", .address, (.change.actions | join(","))]]
+     + [.resource_drift[]? | select(.change.actions != ["no-op"])
+      | if is_protected then ["CRITICAL", .address, (changed_attrs | join(","))]
+        elif .address == "oci_budget_budget.monthly"
+             and (((changed_attrs) - ["actual_spend","forecasted_spend","time_spend_computed","time_updated"]) | length == 0)
+          then ["EXPECTED_COMPUTED", .address, (changed_attrs | join(","))]
+        else ["UNKNOWN", .address, (changed_attrs | join(","))] end])
+    | .[]
+    | @tsv
+  ' "$plan_json" 2>/dev/null
+}
+
+# Independent read-only comparison of the RAW Terraform state and the live
+# OCI MySQL NSG membership (platform-drift-verification-repair, Phase 2).
+# Reads files prepared by the caller (raw `state pull` JSON and the JSON of
+# `oci mysql db-system get`); performs no OCI access itself, so it is fully
+# offline-testable. Prints "state=<nsg_ids> live=<nsg_ids>" and returns:
+#   0 — both parsed and exactly equal (sorted)
+#   1 — both parsed but they disagree (the caller MUST fail)
+#   2 — unparseable/incomplete inputs (the caller MUST fail closed)
+m1_mysql_nsg_state_live_agree() { # m1_mysql_nsg_state_live_agree <raw-state.json> <live-db-system.json>
+  local state_list live_ids
+  state_list="$(jq -r -e '
+    [ .resources[]?
+      | select(.mode == "managed" and .type == "oci_mysql_mysql_db_system" and .name == "existing")
+      | .instances[]?.attributes.nsg_ids // [] ]
+    | (if length == 1 then .[0] else null end)
+    | (if . == null then error("state must hold exactly one managed oci_mysql_mysql_db_system.existing instance") else . end)
+    | sort | join(",")
+  ' "$1" 2>/dev/null)" || return 2
+  live_ids="$(jq -r -e '
+    [ (.data."nsg-ids" // .data.nsg_ids // [])[] ] | sort | join(",")
+  ' "$2" 2>/dev/null)" || return 2
+  printf 'state=[%s] live=[%s]\n' "$state_list" "$live_ids"
+  [[ "$state_list" == "$live_ids" ]]
+}
+
 # PROVE a state key has never existed. Unlike m1_object_exists (an existence
 # probe that cannot distinguish "absent" from "authorization denied"), this
 # proof fails closed: an authorization failure, service error, unparseable

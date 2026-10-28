@@ -278,4 +278,181 @@ grep -q 'record is consumed' "$repo_root/scripts/local/m1-platform-apply.sh" \
 bash -n "$repo_root/tests/local/test-m1-apply-guards.sh" || fail "apply-guard tests must parse"
 echo "ok: local ingress/approval guards"
 
+# ------------------------------------------------------- drift verification repair
+# Platform-drift-verification-repair regressions (2026-10-28): resource_drift
+# is inspected explicitly, plan JSON is structure-validated, state-key probes
+# are classified, and raw state is compared against live MySQL nsg_ids.
+policy="$repo_root/scripts/ci/platform-safe-plan-policy.json"
+
+# (9) A genuinely clean plan passes structure validation and classifies empty.
+clean_plan="$work/clean-plan.json"
+cat > "$clean_plan" <<'EOF'
+{"format_version":"1.2","terraform_version":"1.12.2","errored":false,
+ "resource_changes":[],"resource_drift":[],"output_changes":{},
+ "prior_state":{"values":{"root_module":{"resources":[]}}}}
+EOF
+m1_plan_structure_ok "$clean_plan" || fail "a well-formed clean plan must pass structure validation"
+drift_out="$(m1_classify_drift "$clean_plan" "$policy")"
+[[ -z "$drift_out" ]] || fail "clean plan must classify as empty, got: $drift_out"
+echo "ok: clean plan passes (regression 9)"
+
+# (1) Empty resource_changes with nonempty resource_drift must NOT read clean —
+# Terraform 1.12 omits empty resource_changes entirely, so resource_drift is
+# the authoritative drift signal.
+drift_only_plan="$work/drift-only-plan.json"
+cat > "$drift_only_plan" <<'EOF'
+{"format_version":"1.2","terraform_version":"1.12.2","errored":false,
+ "resource_drift":[{"address":"oci_mysql_mysql_db_system.existing","mode":"managed","type":"oci_mysql_mysql_db_system","name":"existing","provider_name":"registry.terraform.io/oracle/oci",
+   "change":{"actions":["update"],"before":{"nsg_ids":["ocid1.networksecuritygroup.oc1.test"],"time_updated":"a"},"after":{"nsg_ids":[],"time_updated":"b"},"after_unknown":{}}}],
+ "output_changes":{},"prior_state":{"values":{"root_module":{"resources":[]}}}}
+EOF
+m1_plan_structure_ok "$drift_only_plan" || fail "plan with omitted empty resource_changes must pass structure validation"
+drift_out="$(m1_classify_drift "$drift_only_plan" "$policy")"
+[[ "$(grep -c $'^CRITICAL\toci_mysql_mysql_db_system\.existing\t' <<<"$drift_out")" -eq 1 ]] \
+  || fail "empty resource_changes with nonempty resource_drift must classify as CRITICAL, got: $drift_out"
+echo "ok: resource_drift inspected explicitly (regression 1)"
+
+# (3) Budget computed drift is reported as EXPECTED_COMPUTED; any non-computed
+# budget attribute (or unknown resource) is UNKNOWN.
+budget_plan="$work/budget-plan.json"
+cat > "$budget_plan" <<'EOF'
+{"format_version":"1.2","terraform_version":"1.12.2","errored":false,
+ "resource_drift":[
+  {"address":"oci_budget_budget.monthly","mode":"managed","type":"oci_budget_budget","name":"monthly","provider_name":"registry.terraform.io/oracle/oci",
+   "change":{"actions":["update"],"before":{"actual_spend":null,"forecasted_spend":null,"time_spend_computed":null,"time_updated":"a","amount":5},"after":{"actual_spend":0,"forecasted_spend":0,"time_spend_computed":"t","time_updated":"b","amount":5},"after_unknown":{}}}],
+ "output_changes":{},"prior_state":{"values":{"root_module":{"resources":[]}}}}
+EOF
+drift_out="$(m1_classify_drift "$budget_plan" "$policy")"
+grep -q $'^EXPECTED_COMPUTED\toci_budget_budget\.monthly\tactual_spend,forecasted_spend,time_spend_computed,time_updated$' <<<"$drift_out" \
+  || fail "budget computed drift must be EXPECTED_COMPUTED with exact attributes, got: $drift_out"
+jq '.resource_drift[0].change.after.amount = 9' "$budget_plan" > "$work/budget-amount-plan.json"
+drift_out="$(m1_classify_drift "$work/budget-amount-plan.json" "$policy")"
+grep -q $'^UNKNOWN\toci_budget_budget\.monthly\t' <<<"$drift_out" \
+  || fail "a changed budget amount must be UNKNOWN, got: $drift_out"
+echo "ok: budget computed drift reported (regression 3)"
+
+# UNKNOWN: drift on an unprotected, non-budget resource must fail classification.
+cat > "$work/unknown-plan.json" <<'EOF'
+{"format_version":"1.2","terraform_version":"1.12.2","errored":false,
+ "resource_drift":[{"address":"oci_budget_alert_rule.actual_75","mode":"managed","type":"oci_budget_alert_rule","name":"actual_75","provider_name":"registry.terraform.io/oracle/oci",
+   "change":{"actions":["update"],"before":{"threshold":75},"after":{"threshold":80},"after_unknown":{}}}],
+ "output_changes":{},"prior_state":{"values":{"root_module":{"resources":[]}}}}
+EOF
+drift_out="$(m1_classify_drift "$work/unknown-plan.json" "$policy")"
+grep -q $'^UNKNOWN\toci_budget_alert_rule\.actual_75\t' <<<"$drift_out" \
+  || fail "unprotected resource drift must be UNKNOWN, got: $drift_out"
+
+# (7) Malformed or mistyped plan JSON must fail structure validation.
+printf '{"resource_changes":' > "$work/truncated.json"
+m1_plan_structure_ok "$work/truncated.json" 2>/dev/null && fail "truncated plan JSON must fail"
+printf '{"format_version":"1.2","errored":true,"prior_state":{}}' > "$work/errored.json"
+m1_plan_structure_ok "$work/errored.json" 2>/dev/null && fail "errored plan must fail"
+printf '{"format_version":"1.2","errored":false,"prior_state":{},"resource_drift":{}}' > "$work/wrongtype.json"
+m1_plan_structure_ok "$work/wrongtype.json" 2>/dev/null && fail "mistyped resource_drift must fail"
+echo "ok: malformed plan JSON fails (regression 7)"
+
+# (2) Raw-state vs live MySQL nsg_ids comparison: mismatch fails, agreement
+# passes, and incomplete inputs fail closed.
+state_json="$work/state.json"; live_json="$work/live.json"
+DB_NSG="ocid1.networksecuritygroup.oc1.ap-hyderabad-1.aaaaaaaay3iipwy7weycrbdb7slmiu44mmhvnxsrizrrs2w7dpag5wur6hga"
+printf '{"resources":[{"mode":"managed","type":"oci_mysql_mysql_db_system","name":"existing","instances":[{"attributes":{"id":"ocid1.mysqldbsystem.oc1.test","nsg_ids":["%s"]}}]}]}' "$DB_NSG" > "$state_json"
+printf '{"data":{"lifecycle-state":"ACTIVE","nsg-ids":[]}}' > "$live_json"
+rc=0; out="$(m1_mysql_nsg_state_live_agree "$state_json" "$live_json")" || rc=$?
+[[ "$rc" -eq 1 ]] || fail "state/live NSG mismatch must fail (rc=1), got rc=$rc: $out"
+grep -qF "state=[$DB_NSG] live=[]" <<<"$out" || fail "mismatch must report both values, got: $out"
+printf '{"data":{"lifecycle-state":"ACTIVE","nsg-ids":["%s"]}}' "$DB_NSG" > "$live_json"
+m1_mysql_nsg_state_live_agree "$state_json" "$live_json" >/dev/null \
+  || fail "agreeing state/live nsg_ids must pass"
+printf '{"resources":[]}' > "$state_json"
+if m1_mysql_nsg_state_live_agree "$state_json" "$live_json" 2>/dev/null; then
+  fail "state without the MySQL resource must fail closed (rc=2)"
+fi
+echo "ok: state/live NSG comparison (regression 2)"
+
+# (4,5,6) State-key presence classification: a stubbed `oci` proves that
+# 403/500/timeout/unparseable HEAD outcomes are NEVER classified as absence.
+oci_stub_dir="$work/stub-bin"; mkdir -p "$oci_stub_dir"
+stub_oci() { # stub_oci <exit-code> <stderr-body>
+  {
+    printf '#!/bin/sh\ncat >/dev/null\n'
+    printf "printf '%%s' '%s' >&2\n" "$2"
+    printf 'exit %s\n' "$1"
+  } > "$oci_stub_dir/oci"
+  chmod +x "$oci_stub_dir/oci"
+}
+run_status() { ( PATH="$oci_stub_dir:$PATH" m1_state_key_status "platform/terraform.tfstate" ); }
+stub_oci 0 '' ; [[ "$(run_status)" == "exists" ]] || fail "HEAD rc=0 must classify exists"
+stub_oci 1 '{"code":"ObjectNotFound","message":"not found","status":404}'
+[[ "$(run_status)" == "absent" ]] || fail "HEAD 404 must classify absent (authoritative 404 only)"
+stub_oci 1 '{"code":"NotAuthenticated","message":"denied","status":403}'
+[[ "$(run_status)" == "auth" ]] || fail "HEAD 403 must classify auth, never absent (regression 4)"
+stub_oci 1 '{"code":"InternalError","message":"boom","status":500}'
+[[ "$(run_status)" == "service" ]] || fail "HEAD 500 must classify service, never absent (regression 5)"
+stub_oci 1 '{"code":"TooManyRequests","message":"throttled","status":429}'
+[[ "$(run_status)" == "service" ]] || fail "HEAD 429 must classify service"
+stub_oci 7 'curl: (28) Connection timed out after 30000 milliseconds'
+[[ "$(run_status)" == "timeout" ]] || fail "connection timeout must classify timeout"
+stub_oci 1 'unparseable gibberish without status'
+[[ "$(run_status)" == "malformed" ]] || fail "unparseable HEAD response must classify malformed"
+echo "ok: state-key classification (regressions 4,5,6)"
+
+# (6) The verify/init/plan/preflight scripts must consume the classifier and
+# fail closed on absence-for-established-deployment and unknown classifications.
+verify_sh="$repo_root/scripts/local/m1-verify.sh"
+grep -q 'm1_state_key_status "$M1_PLATFORM_KEY"' "$verify_sh" \
+  || fail "verify must classify the platform state key"
+grep -q 'platform state key $M1_PLATFORM_KEY is ABSENT while the platform deployment is established' "$verify_sh" \
+  || fail "verify must fail on absent platform state for an established deployment"
+grep -q 'presence UNKNOWN (OCI probe classified' "$verify_sh" \
+  || fail "verify must fail closed on unknown state-key classifications"
+grep -q 'm1_mysql_nsg_state_live_agree' "$verify_sh" \
+  || fail "verify must run the independent state/live NSG comparison"
+for script in m1-platform-init.sh m1-platform-plan.sh m1-preflight.sh; do
+  grep -q 'm1_state_key_status' "$repo_root/scripts/local/$script" \
+    || fail "$script must classify the platform state key (no failed HEAD as absence)"
+done
+echo "ok: scripts consume the state-key classifier (regression 6)"
+
+# (8) A normal refreshing plan is required: -refresh=false and -refresh-only
+# are refused wherever a reviewed plan is produced or applied.
+m1_verify_refreshing_plan -lock=true -input=false || fail "plain plan args must pass the refreshing-plan guard"
+if m1_verify_refreshing_plan -refresh=false 2>/dev/null; then fail "-refresh=false must be refused"; fi
+if m1_verify_refreshing_plan -refresh-only 2>/dev/null; then fail "-refresh-only must be refused"; fi
+if TF_CLI_ARGS_plan="-refresh=false" m1_verify_refreshing_plan 2>/dev/null; then
+  fail "TF_CLI_ARGS_plan -refresh=false must be refused"
+fi
+for script in m1-platform-plan.sh m1-platform-apply.sh; do
+  grep -q 'm1_verify_refreshing_plan "\$@"' "$repo_root/scripts/local/$script" \
+    || fail "$script must enforce the refreshing-plan contract"
+done
+grep -q 'm1_verify_refreshing_plan' "$repo_root/scripts/local/m1-verify.sh" \
+  && fail "verify's refresh-only assessment must not be constrained by the normal-plan guard (it is deliberately refresh-only)" || true
+grep -q 'UNACCEPTABLE DRIFT' "$verify_sh" || fail "verify must fail acceptance on CRITICAL/UNKNOWN drift"
+grep -q 'acknowledged computed drift only' "$verify_sh" \
+  || fail "verify must report expected computed drift as acknowledged, never silent zero"
+echo "ok: refreshing-plan contract (regression 8)"
+
+# (4, retest) The dedicated MYSQL-NSG-RETEST gate: separate approval marker,
+# offline plan recheck, and live before/after preconditions in the apply path.
+apply_sh="$repo_root/scripts/local/m1-platform-apply.sh"
+grep -q 'required_gate="MYSQL-NSG-RETEST"' "$apply_sh" \
+  || fail "apply must select the separate MYSQL-NSG-RETEST gate for retest plans"
+grep -q 'assert-safe-plan-scope-a.sh" --policy "$M1_REPO_ROOT/$M1_MYSQL_RETEST_POLICY' "$apply_sh" \
+  || fail "apply must revalidate the saved plan against the dedicated retest policy"
+grep -q 'retest-live-active' "$apply_sh" && grep -q 'retest-live-before' "$apply_sh" \
+  || fail "apply must check live MySQL ACTIVE and the reviewed before-value nsg_ids"
+grep -q 'M1_MYSQL_RETEST_POLICY=' "$repo_root/scripts/local/m1-local.env" \
+  || fail "m1-local.env must name the dedicated retest policy"
+grep -q 'retest' "$repo_root/tests/ci/run.sh" \
+  || fail "retest fixture tests must stay wired into the CI test runner"
+echo "ok: MYSQL-NSG-RETEST gate contracts (regression 10: retest path)"
+
+# (10) No existing acceptance guards regress: the policy files referenced by
+# the repaired gates stay intact and valid.
+jq -e '.protected_imports | type == "array"' "$policy" >/dev/null \
+  || fail "general safe-plan policy must stay intact"
+jq -e '.allow[0].expected_attribute_values_before.nsg_ids == []' \
+  "$repo_root/scripts/ci/platform-safe-plan-mysql-retest-policy.json" >/dev/null \
+  || fail "retest policy before-value contract must stay intact"
+
 echo "M1-LOCAL guard tests passed"

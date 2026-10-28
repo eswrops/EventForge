@@ -33,6 +33,9 @@ m1_verify_auth_mode \
 m1_verify_locking_retained "$@" \
   && m1_check PASS "locking-retained" "locking retained" \
   || fail_gate locking-retained "lock disabling refused"
+m1_verify_refreshing_plan "$@" \
+  && m1_check PASS "refreshing-plan" "normal refreshing plan (no -refresh=false / -refresh-only)" \
+  || fail_gate refreshing-plan "a reviewed plan must reflect live state"
 m1_verify_no_recovery_invocation "$@" \
   && m1_check PASS "no-state-recovery" "none" \
   || fail_gate no-state-recovery "recovery invocation refused"
@@ -75,18 +78,27 @@ operator="$(git -C "$M1_REPO_ROOT" config user.name)"
 
 # Pre-plan protected state snapshot -----------------------------------------
 pre_pull="$M1_EVIDENCE_DIR/state/platform-pre-plan.tfstate"
-if m1_object_exists "$M1_PLATFORM_KEY"; then
-  if "$M1_TERRAFORM_BIN" -chdir="$root" state pull > "$pre_pull" 2>"$M1_EVIDENCE_DIR/logs/pre-plan-pull.err" && [[ -s "$pre_pull" ]]; then
-    read -r state_lineage state_serial <<<"$(m1_state_meta "$pre_pull")"
-    m1_check PASS "pre-plan-snapshot" "remote state lineage=$state_lineage serial=$state_serial"
-  else
-    fail_gate pre-plan-snapshot "could not pull platform state before planning"
-  fi
-else
-  state_lineage=""; state_serial="0"
-  m1_check FAIL "pre-plan-snapshot" "$M1_PLATFORM_KEY absent — import flow must run before a platform plan"
-  m1_exit_gate_failed
-fi
+platform_key_status="$(m1_state_key_status "$M1_PLATFORM_KEY")"
+case "$platform_key_status" in
+  exists)
+    if "$M1_TERRAFORM_BIN" -chdir="$root" state pull > "$pre_pull" 2>"$M1_EVIDENCE_DIR/logs/pre-plan-pull.err" && [[ -s "$pre_pull" ]]; then
+      read -r state_lineage state_serial <<<"$(m1_state_meta "$pre_pull")"
+      m1_check PASS "pre-plan-snapshot" "remote state lineage=$state_lineage serial=$state_serial"
+    else
+      fail_gate pre-plan-snapshot "could not pull platform state before planning"
+    fi
+    ;;
+  absent)
+    state_lineage=""; state_serial="0"
+    m1_check FAIL "pre-plan-snapshot" "$M1_PLATFORM_KEY authoritatively absent — import flow must run before a platform plan"
+    m1_exit_gate_failed
+    ;;
+  *)
+    m1_check FAIL "pre-plan-snapshot" \
+      "$M1_PLATFORM_KEY presence UNKNOWN (OCI probe classified: $platform_key_status) — a failed or ambiguous response is never treated as absence"
+    m1_exit_gate_failed
+    ;;
+esac
 
 # Plan -----------------------------------------------------------------------
 stamp="$(date -u +%Y%m%dT%H%M%SZ)"

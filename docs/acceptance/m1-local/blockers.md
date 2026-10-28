@@ -52,3 +52,17 @@ apply failed:
 The retained disposable validation keys (`validation/live-acceptance-20261027T120000Z-m1live/`,
 `…-20261027T130000Z-m1live-r2/`, `validation/restore-test-…/`) and their cleanup-approval
 boundary are untouched (separately approved operation, [../m1-final/README.md](../m1-final/README.md)).
+
+## B5 sequencing correction (2026-10-28 — drift-verification repair)
+
+The verify-run "clean drift" results cited by O4 (18 PASS / 0 FAIL) were
+**misleading**: the drift gate inspected only `resource_changes` and missed
+that `resource_drift` carries the stale MySQL `nsg_ids` ([corrected
+verdict](platform-drift-verification-repair.md)). Consequence for the B5
+sequence: platform state (serial 12) still records `nsg_ids = [db-nsg]` while
+the live db system has `[]` — so a MYSQL-NSG-RETEST plan built against the
+current state would be a **silent no-op** on `nsg_ids`. A state-only
+reconciliation package (separately approved, NOT executed) is now a mandatory
+prerequisite between MYSQL-NSG-IAM and MYSQL-NSG-RETEST; the retest apply gate
+additionally verifies live MySQL ACTIVE with the reviewed before-value
+`nsg_ids` under the separate `GATE: MYSQL-NSG-RETEST` approval.

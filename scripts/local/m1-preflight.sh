@@ -105,11 +105,21 @@ else
 fi
 
 # 6. Platform state-key ownership ---------------------------------------
-if m1_object_exists "$M1_PLATFORM_KEY"; then
-  m1_check FAIL "platform-key" "$M1_PLATFORM_KEY already exists — Phase 3 init requires the operator snapshot decision"
-else
-  m1_check PASS "platform-key" "$M1_PLATFORM_KEY absent (fresh platform state expected)"
-fi
+# Presence is classified; a failed or ambiguous probe is never recorded as
+# "absent" and fails the preflight.
+platform_key_status="$(m1_state_key_status "$M1_PLATFORM_KEY")"
+case "$platform_key_status" in
+  exists)
+    m1_check FAIL "platform-key" "$M1_PLATFORM_KEY already exists — Phase 3 init requires the operator snapshot decision"
+    ;;
+  absent)
+    m1_check PASS "platform-key" "$M1_PLATFORM_KEY authoritatively absent (fresh platform state expected)"
+    ;;
+  *)
+    m1_check FAIL "platform-key" \
+      "$M1_PLATFORM_KEY presence UNKNOWN (OCI probe classified: $platform_key_status) — a failed or ambiguous response is never treated as absence"
+    ;;
+esac
 
 # 7. Repository hygiene --------------------------------------------------
 m1_refuse_tracked_sensitive_files "$M1_REPO_ROOT" \
@@ -129,7 +139,7 @@ jq -n \
   --arg operator_ocid "$(jq -r '.data.id' "$oci_user_json")" \
   --arg commit "$commit" \
   --arg lineage "$lineage" \
-  --arg platform_key_state "$(m1_object_exists "$M1_PLATFORM_KEY" && echo exists || echo absent)" \
+  --arg platform_key_state "$platform_key_status" \
   --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   '{deployment_mode:"LOCAL_OPERATOR", oci_federation:"DEFERRED", github_stage_2_iam:"DEFERRED",
     run_tag:$run_tag, operator:{name:$operator, ocid:$operator_ocid}, commit:$commit,
