@@ -54,3 +54,46 @@ security-list rule `10.0.2.0/24 → 3306`).
 3. Diagnostics policy removal — `eventforge-instance-run-command-diagnostics`
    should be destroyed after the diagnostic window (separate
    destroy-approving package).
+
+## Addendum (2026-10-28T22:50Z): follow-up execution outcome — Run Command path BLOCKED, SL-CORRECTION deferred
+
+Operator follow-up authorization "approve all" (2026-10-28T22:34Z) covered
+approval C, SL-CORRECTION, and diagnostics-policy removal. Outcome:
+
+1. **Approval C — ATTEMPTED, BLOCKED (fail-closed, no broadening).** Two Run
+   Command executions were created for `rust-api-test` (one was an accidental
+   duplicate caused by an agent-side CLI parse error masking a successful
+   first create — documented as a deviation; both commands are the identical
+   read-only script). Despite the plugin reporting RUNNING and the execution
+   record existing (`ACCEPTED`, delivery `VISIBLE`), the command remained
+   stuck at **ACCEPTED for 14+ minutes** and was never picked up or completed
+   — exactly the retained operational caveat ("policy creation does not prove
+   command completion"). Per the fail-closed rule the Run Command route is
+   STOPPED: no command completed, no in-VM evidence was produced, and the
+   policy is NOT broadened in place. Evidence:
+   `/Users/eswr/secure/evidence/b5-connectivity-attempt-20261028T2235Z/`.
+   Recovery options requiring a NEW operator decision: (a) a re-reviewed
+   policy package broadening the instance grant (e.g. the Oracle-documented
+   `manage instance-agent-command-execution-family` dynamic-group form, or
+   adding `instance-agent-command-family` read) — a NEW package, not a
+   modified record; (b) refreshing the SSH source /32 (separate SL change);
+   (c) Oracle SR. The two stale VM1 commands remain inert (never executed).
+
+2. **SL-CORRECTION — NOT executed.** Its precondition 3 (fresh in-VM evidence
+   that the NSG-paired path carries 3306) cannot be satisfied while the Run
+   Command path is blocked, and no SSH vantage is available (IP rotation).
+   Removing the transitional `10.0.2.0/24 → 3306` rule without any in-VM
+   verification path risks silently cutting app→MySQL connectivity. The rule
+   is RETAINED; the package stays prepared.
+
+3. **Diagnostics-policy removal — NOT executed.** Removing
+   `eventforge-instance-run-command-diagnostics` now would eliminate the only
+   prepared diagnostic path while connectivity verification is still pending;
+   it also mechanically requires a PR (the resource carries
+   `prevent_destroy`). Deferred until the diagnostic window actually closes.
+
+Config-level posture (read-only, supporting the eventual SL-CORRECTION):
+the db NSG carries the reviewed 3306 ingress from the app NSG, the app NSG
+carries the symmetric egress, and both VM VNICs + the MySQL db system hold
+their NSG memberships — the pairing is correctly configured; what is missing
+is only the runtime proof through it.
