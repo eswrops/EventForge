@@ -81,3 +81,18 @@ policy PASS at address and attribute level). The state-only reconciliation is
 now an available-but-not-required option; the retest proceeds through the
 unchanged gates: MYSQL-NSG-IAM apply → GATE: MYSQL-NSG-RETEST approval →
 one-attempt apply of the reviewed plan.
+
+
+## B5 RESOLVED (2026-10-28T22:26Z — execution record)
+
+The MYSQL-NSG-RETEST work request **SUCCEEDED** on the one authorized attempt
+after the corrective IAM policies (and the separately approved diagnostics
+policy) were applied: live `rust-api-heatwave` is ACTIVE with
+`nsg_ids = [eventforge-db-nsg]` and Terraform state matches live (serial 13,
+lineage unchanged; `m1-verify.sh` 19 PASS / 0 FAIL, drift clean). The
+earlier `AuthorizationFailed` failures are fully explained and remediated.
+Full record: [b5-execution-record.md](b5-execution-record.md). Follow-ups
+require their own approvals: post-retest in-VM connectivity proof (Run
+Command, approval C), then the SL-CORRECTION window
+([db-sl-3306-correction-approval.md](db-sl-3306-correction-approval.md)), and
+diagnostics-policy removal after that window.

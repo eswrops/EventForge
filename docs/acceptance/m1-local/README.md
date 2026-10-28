@@ -135,3 +135,14 @@ planned action — a normal refreshing plan yields exactly the reviewed
 is **not inherently required** before the one-attempt retest. The retest
 declaration is merged with its plan-time attribute-level gate; the apply
 remains behind the separate `GATE: MYSQL-NSG-RETEST` approval.
+
+
+## B5 execution close-out (2026-10-28T22:26Z)
+
+Operator authorized "approved, do both": (A) the single diagnostics IAM
+policy (approval A, merged with PR #48) and (B) the one-attempt MYSQL-NSG-RETEST.
+Both succeeded on first execution with every machine gate PASS; the
+UPDATE_DBSYSTEM work request SUCCEEDED and the db-NSG attachment is live and
+state-consistent ([b5-execution-record.md](b5-execution-record.md)). B5 is
+RESOLVED. Remaining: post-retest in-VM connectivity proof (approval C) and
+the SL-CORRECTION observation window.

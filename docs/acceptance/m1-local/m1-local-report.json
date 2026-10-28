@@ -45,7 +45,8 @@
       "mysql_nsg_ids": "CRITICAL — state [eventforge-db-nsg] vs live [] (stale B5 discrepancy)",
       "budget": "EXPECTED_COMPUTED — actual_spend/forecasted_spend/time_spend_computed null->0 (acknowledged)",
       "acceptance": "FAIL until separately approved state reconciliation"
-    }
+    },
+    "B5": "RESOLVED (2026-10-28T22:26Z — MYSQL-NSG-RETEST work request SUCCEEDED on the one authorized attempt; live+state nsg_ids=[eventforge-db-nsg]; verify 19/0 — see docs/acceptance/m1-local/b5-execution-record.md)"
   },
   "import_execution": {
     "date": "2026-10-27",
