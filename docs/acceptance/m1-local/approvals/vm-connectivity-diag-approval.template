@@ -1,0 +1,20 @@
+# VM-CONNECTIVITY-DIAGNOSTIC — approval record (template)
+
+GATE: VM-CONNECTIVITY-DIAGNOSTIC
+APPROVER: <operator name>
+Grant phrase: <verbatim operator grant>
+Timestamp (UTC): <YYYY-MM-DDTHH:MM:SSZ>
+
+> **Template — the completed record stays OUTSIDE Git.** This approval
+> authorizes EXACTLY TWO read-only Run Command executions of the pinned
+> script (SHA-256
+> `ddd3b3ac66039e6d991513a317010dbcb2610edb6aff3557f2ad43fd4219d08d`),
+> one per VM (`rust-api-test` 10.0.2.129, `rust-api-worker` 10.0.2.94),
+> BEFORE any MySQL change — producing CURRENT VM→MySQL 3306 connectivity
+> evidence. Independent of IAM-RUN-COMMAND-DIAG (which must already be
+> executed and verified) and of MYSQL-NSG-RETEST. Requires the Compute
+> Instance Run Command plugin RUNNING (verified 2026-10-28 on both VMs) and
+> the instance-side diagnostics policy to be applied. Execution is read-only:
+> no credentials, no sudo, no filesystem mutation, no service restarts, no
+> network change. A failure result is itself diagnostic and pauses the retest
+> authorization for reassessment.

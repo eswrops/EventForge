@@ -83,6 +83,15 @@ commit="$(git -C "$M1_REPO_ROOT" rev-parse HEAD)"
   && m1_check PASS "metadata-state-binding" "lineage=$meta_lineage serial=$meta_serial" \
   || fail_gate metadata-state-binding "metadata lacks the plan-time state lineage/serial binding"
 
+# The approval record must independently name the SAME plan-time state
+# lineage/serial the metadata binds — the operator signs against a concrete
+# state, not an abstract plan.
+record_lineage_serial="$(awk -F': ' '/^IAM state lineage\/serial at plan time:/{print $2; exit}' "$approval_record")"
+[[ "$record_lineage_serial" == "$meta_lineage/$meta_serial" ]] \
+  && m1_check PASS "record-state-binding" "record names the approved lineage/serial ($record_lineage_serial)" \
+  || fail_gate record-state-binding \
+       "the record's plan-time IAM state lineage/serial ('$record_lineage_serial') does not match the metadata binding ($meta_lineage/$meta_serial) — sign against the reviewed state or re-plan"
+
 # Render the reviewed statement and require the approval record to carry it
 # verbatim, together with the policy address.
 [[ -f "$tfvars" ]] || fail_gate operator-vars "$tfvars missing"

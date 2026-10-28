@@ -1,0 +1,35 @@
+# IAM-RUN-COMMAND-DIAG — approval record (template)
+
+GATE: IAM-RUN-COMMAND-DIAG
+APPROVAL_DECISION: <OPERATOR_AUTHORIZATION_REQUIRED>
+APPROVER: <operator name>
+Grant phrase: <verbatim operator grant>
+Timestamp (UTC): <YYYY-MM-DDTHH:MM:SSZ>
+Saved-plan SHA-256: <sha256 of the exists-mode diagnostics plan>
+Source commit: <full merged main commit>
+Policy address: oci_identity_policy.instance_run_command_diagnostics
+Statement: Allow dynamic-group eventforge-instances to use instance-agent-command-execution-family in compartment id ocid1.compartment.oc1..aaaaaaaar3kvayxcj4vuo6ydkoaxrh4yeovnvr6rgxr7kdljzijrpbxaz3ea where request.instance.id=target.instance.id
+IAM state lineage/serial at plan time: <lineage>/<serial>
+
+> **Template — execution is REFUSED while any fill marker remains.** Copy
+> this file OUTSIDE Git (the completed record is the operator's document,
+> never committed), then personally replace every `<...>` field:
+> `APPROVAL_DECISION` must become exactly
+> `AUTHORIZE_ONE_DIAGNOSTIC_IAM_CREATE` (standalone, no trailing text — the
+> machine gate refuses the placeholder, duplicates, and conflicts). All other
+> fields are cross-checked mechanically by `scripts/local/m1-iam-diag-apply.sh`
+> against the saved plan metadata before any live access: plan SHA-256,
+> source commit, policy address, the rendered statement (character-exact),
+> and the plan-time IAM state lineage/serial. Approval fields are never
+> inserted automatically; the grant must be separately attributable to the
+> operator. Exactly ONE `iam/`-root apply is authorized: the one-policy
+> diagnostics CREATE under contract `scripts/ci/iam-plan-contract-diag.json`
+> (the two applied MySQL policies must remain untouched; plan generated via
+> `M1_IAM_EXPECT_STATE=exists M1_IAM_PLAN_CONTRACT=scripts/ci/iam-plan-contract-diag.json
+> scripts/local/m1-iam-plan.sh`; apply via
+> `M1_IAM_DIAG_APPLY_APPROVED_BY=<APPROVER value>
+> scripts/local/m1-iam-diag-apply.sh <plan.tfplan> <metadata.json> <this record>`).
+> A failure consumes the approval. This approval does NOT authorize any Run
+> Command execution (see the VM-CONNECTIVITY-DIAGNOSTIC gates), any MySQL
+> change, or any other IAM change. Recommended for REMOVAL after the
+> diagnostic window (separate destroy-approving package).

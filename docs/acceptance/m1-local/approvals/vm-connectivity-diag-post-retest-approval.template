@@ -1,0 +1,16 @@
+# VM-CONNECTIVITY-DIAGNOSTIC-POST-RETEST — approval record (template)
+
+GATE: VM-CONNECTIVITY-DIAGNOSTIC-POST-RETEST
+APPROVER: <operator name>
+Grant phrase: <verbatim operator grant>
+Timestamp (UTC): <YYYY-MM-DDTHH:MM:SSZ>
+
+> **Template — the completed record stays OUTSIDE Git.** This approval
+> authorizes EXACTLY TWO read-only Run Command executions of the identical
+> pinned script (SHA-256
+> `ddd3b3ac66039e6d991513a317010dbcb2610edb6aff3557f2ad43fd4219d08d`),
+> one per VM, AFTER the MYSQL-NSG-RETEST work request reaches SUCCEEDED and
+> live membership is confirmed — proving the new app-NSG↔db-NSG 3306 path
+> (the pairing is ADDITIVE to the retained transitional security-list rule,
+> so connectivity must hold). Independent of every other gate; this is the
+> evidence the later SL-CORRECTION package builds on.
