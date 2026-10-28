@@ -30,6 +30,7 @@ and is not rewritten by this track.
 | [security.md](security.md) | Post-apply network security verification |
 | [next-ingress-security-approval.md](next-ingress-security-approval.md) | Prepared change package for the future ingress gate: effective rule union, legacy-rule findings, scope-A/scope-B separation, sequencing, rollback, expected plan actions |
 | [scope-a-network-execution-approval.md](scope-a-network-execution-approval.md) | Executable Scope-A package: baseline reconfirmation, saved-plan proof (4 in-place updates), scope-A safe-plan policy, guarded security-list corrections with manifests + hashes, A0–A6 sequence, approvals |
+| [platform-drift-verification-repair.md](platform-drift-verification-repair.md) | 2026-10-28 drift-verification repair: corrected drift verdict (MySQL nsg_ids CRITICAL + budget computed), state-key classification, MYSQL-NSG-RETEST gate hardening, prepared state-reconciliation package |
 | [cost.md](cost.md) | Quota / Always-Free / budget findings |
 | [blockers.md](blockers.md) | Blockers and deferred items |
 | [m1-local-report.json](m1-local-report.json) | Machine-readable gate summary |
@@ -95,3 +96,28 @@ contexts + `CI script and workflow checks`). Re-verified live this date:
 
 Statuses retained: **OCI-FEDERATION = DEFERRED, STAGE-2-IAM = NOT_APPLIED,
 IAM-DENIAL = NOT_RUN, ONS-DELIVERY = PENDING.** None were converted to PASS.
+
+## Platform drift verification correction (2026-10-28)
+
+The historical execution records above are NOT rewritten. A repair mission
+([platform-drift-verification-repair.md](platform-drift-verification-repair.md),
+merged through a protected PR) established that the drift gates of the
+2026-10-27/28 verify runs were **misleading**: they inspected only
+`resource_changes`, while Terraform 1.12 reports real drift in
+`resource_drift`. Against platform state serial 12, the last protected
+refresh-only plan carried TWO drift entries the "clean" verdict missed:
+
+- `oci_mysql_mysql_db_system.existing` `nsg_ids`: state
+  `[eventforge-db-nsg]` vs live `[]` — **CRITICAL** (stale B5 discrepancy)
+- `oci_budget_budget.monthly` computed spend (`actual_spend`,
+  `forecasted_spend`, `time_spend_computed`) — expected read-only computed drift
+
+**Corrected verdict: platform acceptance must not pass while the CRITICAL
+entry stands.** The verifier now classifies drift explicitly, validates plan
+JSON structure, classifies state-key probes (a failed OCI HEAD is never
+absence), fails when raw state and live MySQL `nsg_ids` disagree, and requires
+the separate `GATE: MYSQL-NSG-RETEST` approval with live preconditions for the
+retest. A state-reconciliation package (state-only, separately approved,
+NOT executed) and the retest readiness assessment are in the repair document.
+No infrastructure or state mutation occurred; IAM remains NOT_APPLIED and
+MYSQL-NSG-RETEST remains NOT_RUN.
