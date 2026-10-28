@@ -146,3 +146,42 @@ retry, no refresh-only apply, no state push, no security-list change, no
 public ingress, no application deployment, no M2. Every command executed was
 offline or read-only (evidence inspection, syntax/lint/test harness, git
 operations).
+
+## 7. Addendum (2026-10-29): normal-refresh retest proof — reconciliation NOT inherently necessary
+
+B5 execution preparation (operator scope decision: ACCEPT — Option A) ran the
+normal-refresh proof this document's §4 anticipated could go either way, on
+the isolated branch that re-introduces the reviewed declaration
+`nsg_ids = [oci_core_network_security_group.db.id]` (preserving
+`prevent_destroy` and the narrow `admin_username`/`admin_password`
+ignore_changes; `enable_api_ingress` still false):
+
+- **Raw pre-plan state** (pulled, evidence `b5prep-retest-proof-20261028T201907Z`):
+  platform state lineage `cdda242b-92c1-4371-5b43-495f3849fc4d`, serial 12,
+  MySQL `nsg_ids = ["ocid1…g5wur6hga"]` (stale db-NSG value).
+- **Live OCI**: `rust-api-heatwave` ACTIVE, `nsg_ids = []`.
+- **Normal refreshing plan** (pinned Terraform 1.12.2, refresh enabled, no
+  `-refresh=false`/`-refresh-only`/`-target`/`-replace`, no state writes):
+  planned against the implicitly refreshed in-memory state, yielding
+  **exactly one** resource change — `oci_mysql_mysql_db_system.existing`
+  `update` with `nsg_ids [] → [eventforge-db-nsg]` — the changed-leaf set is
+  exactly `nsg_ids`, `after_unknown` is `{}` (no unknown
+  exposure-relevant attributes), and `resource_drift` describes the
+  pre-existing discrepancy (MySQL + budget computed) without affecting the
+  planned actions.
+- **Dedicated MYSQL-NSG-RETEST policy**: address-level
+  (`assert-safe-plan.sh`) and attribute-level (`assert-safe-plan-scope-a.sh`,
+  now also enforced as a named plan-time gate `retest-attribute-check`) both
+  PASS; the policy's reviewed before-value `[]` matches the refreshed plan.
+
+**Conclusion (§4/§5 consequence):** because Terraform plan performs the
+implicit in-memory refresh HashiCorp documents, the stale `nsg_ids` state
+value does NOT leak into the planned action — the normal plan already produces
+the exact reviewed `[] → [db-nsg]` update. The separate state-only
+reconciliation of §4 is therefore **not inherently necessary** before the
+retest; it remains an available, separately approved option if the operator
+prefers a reconciled baseline, and the `mysql-nsg-state-vs-live` verify gate
+keeps failing (correctly) until the retest updates live membership and the
+next apply/refresh records it. The evidence is preserved outside Git in
+`/Users/eswr/secure/evidence/b5prep-retest-proof-20261028T201907Z/`
+(plan SHA-256 at plan time `93cf4c40…`, committed source `6329c64c`).

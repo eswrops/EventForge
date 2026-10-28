@@ -121,3 +121,17 @@ retest. A state-reconciliation package (state-only, separately approved,
 NOT executed) and the retest readiness assessment are in the repair document.
 No infrastructure or state mutation occurred; IAM remains NOT_APPLIED and
 MYSQL-NSG-RETEST remains NOT_RUN.
+
+## B5 execution preparation (2026-10-29)
+
+Operator security-scope decision recorded: **ACCEPT — Option A** (the
+effectively tenancy-wide VNIC permissions for qualifying mysqldbsystem
+resource principals are accepted; not blanket mutation authorization). The
+normal-refresh retest proof
+([platform-drift-verification-repair.md §7](platform-drift-verification-repair.md))
+established that the stale MySQL `nsg_ids` state value does not reach the
+planned action — a normal refreshing plan yields exactly the reviewed
+`[] → [db-nsg]` update — so the separately approved state-only reconciliation
+is **not inherently required** before the one-attempt retest. The retest
+declaration is merged with its plan-time attribute-level gate; the apply
+remains behind the separate `GATE: MYSQL-NSG-RETEST` approval.

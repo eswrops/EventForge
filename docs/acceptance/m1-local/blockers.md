@@ -66,3 +66,18 @@ reconciliation package (separately approved, NOT executed) is now a mandatory
 prerequisite between MYSQL-NSG-IAM and MYSQL-NSG-RETEST; the retest apply gate
 additionally verifies live MySQL ACTIVE with the reviewed before-value
 `nsg_ids` under the separate `GATE: MYSQL-NSG-RETEST` approval.
+
+## B5 sequencing update (2026-10-29 — normal-refresh proof)
+
+The 2026-10-28 sequencing note above made the state-only reconciliation a
+mandatory prerequisite for MYSQL-NSG-RETEST on the assumption that a retest
+plan built against the stale state (`nsg_ids = [db-nsg]`, live `[]`) would be
+a silent no-op. The normal-refresh retest proof
+([platform-drift-verification-repair.md §7](platform-drift-verification-repair.md))
+**disproved that assumption**: a normal refreshing plan plans against the
+implicitly refreshed in-memory state and yields exactly the reviewed
+`[] → [db-nsg]` update (one change, no unknown attributes, dedicated retest
+policy PASS at address and attribute level). The state-only reconciliation is
+now an available-but-not-required option; the retest proceeds through the
+unchanged gates: MYSQL-NSG-IAM apply → GATE: MYSQL-NSG-RETEST approval →
+one-attempt apply of the reviewed plan.

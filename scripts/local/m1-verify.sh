@@ -282,7 +282,11 @@ if [[ "$state_pull_ok" -eq 1 && "$live_ready" -eq 1 ]]; then
   if [[ -z "$mysql_state_id" ]]; then
     fail_gate mysql-nsg-state-vs-live "MySQL db system missing from raw platform state — cannot verify state/live agreement"
   elif read_oci_json mysql_live_nsg_json mysql db-system get --db-system-id "$mysql_state_id"; then
-    nsg_agreement="$(m1_mysql_nsg_state_live_agree "$state_pull" "$mysql_live_nsg_json")"
+    # The comparison consumes FILE paths; persist the live GET as evidence too.
+    mysql_live_file="$M1_EVIDENCE_DIR/state/mysql-live-nsg.json"
+    printf '%s' "$mysql_live_nsg_json" > "$mysql_live_file"
+    chmod 600 "$mysql_live_file"
+    nsg_agreement="$(m1_mysql_nsg_state_live_agree "$state_pull" "$mysql_live_file")"
     case $? in
       0) m1_check PASS "mysql-nsg-state-vs-live" "raw state and live MySQL nsg_ids agree ($nsg_agreement)" ;;
       1) fail_gate mysql-nsg-state-vs-live "RAW STATE vs LIVE NSG MISMATCH: $nsg_agreement — state reconciliation is required through a separately approved state-only package (never automatic)" ;;
