@@ -85,21 +85,20 @@ resource "oci_identity_policy" "mysql_vnic_update" {
 # existing instances (dynamic group `eventforge-instances`, whose matching
 # rule is exactly the two instance OCIDs) receive Compute Run Command
 # diagnostics so VM→MySQL connectivity can be re-verified without widening
-# any SSH source. Deliberate least privilege per the reviewed mission:
-#   - verb `use` on instance-agent-command-execution-family = READ-only (the
-#     arbitrary-code-execution trigger, INSTANCE_AGENT_COMMAND_EXECUTION_
-#     CREATE, exists only at `manage`, which stays with the operator);
-#   - compartment is the Test compartment, never the tenancy;
-#   - the request/target condition pins each instance to its own commands.
-#   EXECUTION-TIME RISKS (fail-closed, verify on the first approved command):
-#   (1) Oracle's documented dynamic-group form uses `manage` on this family;
-#       with `use` the agent may poll but be unable to report results — if the
-#       command is created but never polled/completed, STOP and prepare a
-#       re-reviewed package; never broaden in place.
-#   (2) `target.instance.id` population for this family is not documented;
-#       per the target.compartment.id finding (b5-mysql-nsg-diagnosis.md §9)
-#       an unpopulated target variable evaluates the condition false and
-#       DENIES — the same re-reviewed-package path applies.
+# any SSH source. This is Oracle's DOCUMENTED standard form for the Run
+# Command instance principal: Oracle's Run Command example explicitly grants
+# `use instance-agent-command-execution-family` to the instances' dynamic
+# group with the `where request.instance.id=target.instance.id` condition.
+# It is also the least-privilege reading: `use` = READ on the execution
+# family (the arbitrary-code trigger INSTANCE_AGENT_COMMAND_EXECUTION_CREATE
+# exists only at `manage`, which stays operator-side), Test compartment only,
+# each instance pinned to its own commands.
+#
+# Operational caveat (fail-closed): creating the policy does NOT prove
+# command completion — the first approved command execution must be verified
+# end-to-end (`oci instance-agent command-execution get` reaching SUCCESS
+# with output). If commands are created but never polled or completed, STOP
+# and prepare a re-reviewed package; never broaden in place.
 resource "oci_identity_policy" "instance_run_command_diagnostics" {
   provider = oci
 

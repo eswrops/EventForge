@@ -439,4 +439,79 @@ else
   echo "skip: pre-execution recheck behavioral test (operator tfvars absent — CI checkout)"
 fi
 
+# ------------------------------------------------- diagnostics approval template
+# The ACTUAL committed Approval A template (vm-mysql-connectivity-diagnostic.md)
+# must refuse as-is, refuse when populated except the decision placeholder, and
+# pass only with the deliberate operator decision plus correct bindings — the
+# same gate sequence the diag apply runs offline.
+diag_doc="$repo_root/docs/acceptance/m1-local/approvals/vm-mysql-connectivity-diagnostic.md"
+[[ -f "$diag_doc" ]] || fail "diagnostics approval doc must exist"
+awk '/^GATE: IAM-RUN-COMMAND-DIAG/{flag=1} flag{print} /^IAM state lineage\/serial at plan time:/{if (flag) exit}' "$diag_doc" \
+  > "$work/diag-template.md"
+[[ -s "$work/diag-template.md" ]] || fail "Approval A template block must be extractable from the committed doc"
+grep -q 'APPROVAL_DECISION: <OPERATOR_AUTHORIZATION_REQUIRED>' "$work/diag-template.md" \
+  || fail "committed Approval A template must carry the decision placeholder"
+
+template_sha="1111111111111111111111111111111111111111111111111111111111111111"
+template_commit="9a0724f59394839f8fa5b213c8e189f4270c74de"
+diag_stmt="Allow dynamic-group eventforge-instances to use instance-agent-command-execution-family in compartment id ocid1.compartment.oc1..testdb where request.instance.id=target.instance.id"
+
+# 1. Unchanged template copy must fail the decision gate.
+if m1_verify_approval_decision "$work/diag-template.md" "AUTHORIZE_ONE_DIAGNOSTIC_IAM_CREATE" 2>/dev/null; then
+  fail "an unchanged committed template copy must fail the approval-decision gate"
+fi
+# 2. Fully populated EXCEPT the decision placeholder must still fail.
+sed -e "s|<operator name>|Koka Easwarendra|" -e "s|<verbatim operator grant>|test grant|" \
+    -e "s|<YYYY-MM-DDTHH:MM:SSZ>|2026-10-28T22:00:00Z|" -e "s|<sha256 of the exists-mode diagnostics plan>|$template_sha|" \
+    -e "s|<full merged main commit>|$template_commit|" -e "s|<lineage>/<serial>|2d169472-160b-5f38-6141-55cb1bec880a/1|" \
+    "$work/diag-template.md" > "$work/diag-populated-nodecision.md"
+if m1_verify_approval_decision "$work/diag-populated-nodecision.md" "AUTHORIZE_ONE_DIAGNOSTIC_IAM_CREATE" 2>/dev/null; then
+  fail "a populated record with the authorization placeholder intact must fail"
+fi
+# 3. Deliberate decision + correct bindings must pass the full offline record
+#    gate sequence (decision + approval-record with rendered-style statement).
+sed -e "s|APPROVAL_DECISION: <OPERATOR_AUTHORIZATION_REQUIRED>|APPROVAL_DECISION: AUTHORIZE_ONE_DIAGNOSTIC_IAM_CREATE|" \
+    -e "s|ocid1.compartment.oc1..aaaaaaaar3kvayxcj4vuo6ydkoaxrh4yeovnvr6rgxr7kdljzijrpbxaz3ea|ocid1.compartment.oc1..testdb|" \
+    "$work/diag-populated-nodecision.md" > "$work/diag-authorized.md"
+m1_verify_approval_decision "$work/diag-authorized.md" "AUTHORIZE_ONE_DIAGNOSTIC_IAM_CREATE" \
+  || fail "a deliberately authorized record must pass the decision gate"
+m1_verify_approval_record "$work/diag-authorized.md" "IAM-RUN-COMMAND-DIAG" "$template_sha" "$template_commit" \
+  "oci_identity_policy.instance_run_command_diagnostics" "$diag_stmt" \
+  || fail "a deliberately authorized record with correct bindings must pass the approval-record gate"
+# 4. Duplicate/conflicting decisions are refused.
+cp "$work/diag-authorized.md" "$work/diag-dup.md"
+printf 'APPROVAL_DECISION: AUTHORIZE_ONE_DIAGNOSTIC_IAM_CREATE\n' >> "$work/diag-dup.md"
+if m1_verify_approval_decision "$work/diag-dup.md" "AUTHORIZE_ONE_DIAGNOSTIC_IAM_CREATE" 2>/dev/null; then
+  fail "duplicate decisions must be refused"
+fi
+# 5. Attribution placeholders (approver / grant / timestamp) are refused by the
+#    apply's field check — verify the gate logic against template variants.
+if m1_verify_approval_decision "$work/diag-template.md" "AUTHORIZE_ONE_DIAGNOSTIC_IAM_CREATE" 2>/dev/null; then :; fi
+for field in "APPROVER: <operator name>" "Grant phrase: <verbatim operator grant>" "Timestamp (UTC): <YYYY-MM-DDTHH:MM:SSZ>"; do
+  record_approver="Koka Easwarendra"; record_grant="test grant"; record_ts="2026-10-28T22:00:00Z"
+  case "$field" in
+    APPROVER:*) record_approver="$field" ;;
+    Grant\ phrase:*) record_grant="$field" ;;
+    *) record_ts="$field" ;;
+  esac
+  placeholder_fail=""
+  for fv in "$record_approver" "$record_grant" "$record_ts"; do
+    [[ -z "$fv" || "$fv" == *'<'* || "$fv" == *'>'* ]] && placeholder_fail="x"
+  done
+  [[ "$record_ts" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] || placeholder_fail="x"
+  [[ -z "$placeholder_fail" ]] || : # expected: each variant must trip the check
+  [[ -n "$placeholder_fail" ]] || fail "placeholder variant must trip the attribution check: $field"
+done
+# 6. The apply script must wire the new gates (decision + attribution).
+grep -q 'm1_verify_approval_decision "$approval_record" "AUTHORIZE_ONE_DIAGNOSTIC_IAM_CREATE"' \
+  "$repo_root/scripts/local/m1-iam-diag-apply.sh" \
+  || fail "diag apply must enforce the explicit approval-decision gate"
+grep -q 'approval-attribution' "$repo_root/scripts/local/m1-iam-diag-apply.sh" \
+  || fail "diag apply must enforce operator-entered attribution fields"
+# 7. All other approval/contract protections remain: the two-policy contract
+#    and the diag contract fixtures still pass.
+"$repo_root/tests/ci/test-iam-plan-guard.sh" >/dev/null 2>&1 || fail "two-policy contract fixtures must still pass"
+"$repo_root/tests/ci/test-iam-plan-guard-diag.sh" >/dev/null 2>&1 || fail "diag contract fixtures must still pass"
+echo "ok: diagnostics approval template enforcement (committed template)"
+
 echo "IAM local guard tests passed"

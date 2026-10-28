@@ -108,6 +108,35 @@ else
     "invalid or missing approval record ($approval_record): it must contain 'GATE: IAM-RUN-COMMAND-DIAG', the plan SHA-256 $plan_sha, commit $commit, the policy address, the reviewed statement verbatim, and an APPROVER: line"
 fi
 
+# Explicit non-default operator decision: the committed template carries
+# 'APPROVAL_DECISION: <OPERATOR_AUTHORIZATION_REQUIRED>'; the operator must
+# replace it — in place, standalone — with exactly
+# 'APPROVAL_DECISION: AUTHORIZE_ONE_DIAGNOSTIC_IAM_CREATE'. The unchanged
+# template authorizes nothing; duplicates/conflicts are refused.
+if m1_verify_approval_decision "$approval_record" "AUTHORIZE_ONE_DIAGNOSTIC_IAM_CREATE"; then
+  m1_check PASS "approval-decision" "AUTHORIZE_ONE_DIAGNOSTIC_IAM_CREATE recorded (exactly one explicit decision)"
+else
+  fail_gate approval-decision \
+    "the record lacks exactly one standalone 'APPROVAL_DECISION: AUTHORIZE_ONE_DIAGNOSTIC_IAM_CREATE' line — the unchanged placeholder, a missing/other decision, or duplicate/conflicting decisions refuse execution"
+fi
+
+# Attribution fields must be operator-entered, never placeholders: an
+# APPROVER, grant phrase, or timestamp still carrying template fill markers
+# (or empty) means the operator has not personally completed the record.
+field_check_fail=""
+record_approver="$(awk -F': ' '/^APPROVER:/{print $2; exit}' "$approval_record")"
+record_grant="$(awk -F': ' '/^Grant phrase:/{print $2; exit}' "$approval_record")"
+record_ts="$(awk -F': ' '/^Timestamp \(UTC\):/{print $2; exit}' "$approval_record")"
+for fv in "$record_approver" "$record_grant" "$record_ts"; do
+  [[ -z "$fv" || "$fv" == *'<'* || "$fv" == *'>'* ]] && field_check_fail="placeholder-or-missing"
+done
+if [[ "$record_ts" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$ ]] && [[ -z "$field_check_fail" ]]; then
+  m1_check PASS "approval-attribution" "approver, grant phrase, and operator timestamp entered (timestamp $record_ts)"
+else
+  fail_gate approval-attribution \
+    "the record's APPROVER / Grant phrase / Timestamp (UTC) fields are missing, empty, or still carry template fill markers — the operator must complete them personally (never agent-inserted)"
+fi
+
 # Independent pre-execution revalidation of the saved plan against the
 # diagnostics contract with the operator OCID.
 m1_verify_terraform_bin \
