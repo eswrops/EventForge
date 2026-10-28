@@ -1,0 +1,13 @@
+{
+  "resources": [
+    {
+      "address": "oci_identity_policy.instance_run_command_diagnostics",
+      "type": "oci_identity_policy",
+      "name": "eventforge-instance-run-command-diagnostics",
+      "compartment": "${db_compartment_ocid}",
+      "statements": [
+        "Allow dynamic-group eventforge-instances to use instance-agent-command-execution-family in compartment id ${db_compartment_ocid} where request.instance.id=target.instance.id"
+      ]
+    }
+  ]
+}

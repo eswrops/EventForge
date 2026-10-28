@@ -462,3 +462,29 @@ jq -e '.allow[0].expected_attribute_values_before.nsg_ids == []' \
   || fail "retest policy before-value contract must stay intact"
 
 echo "M1-LOCAL guard tests passed"
+
+# ------------------------------------------------------- run-command IAM package
+# The diagnostics package (PR kept unmerged until the operator chooses this
+# approach): one-policy contract, dedicated apply script, exists-mode plan.
+diag_contract="$repo_root/scripts/ci/iam-plan-contract-diag.json"
+[[ -s "$diag_contract" ]] || fail "diagnostics IAM contract must exist"
+[[ "$(jq '.resources | length' "$diag_contract")" -eq 1 ]] || fail "diagnostics contract must allow exactly one policy"
+grep -q 'use instance-agent-command-execution-family' "$diag_contract" \
+  || fail "diagnostics policy must grant only the read-only use verb"
+grep -q 'where request.instance.id=target.instance.id' "$diag_contract" \
+  || fail "diagnostics policy must carry the request/target instance condition"
+grep -qE 'manage|in tenancy|all-resources' "$diag_contract" \
+  && fail "diagnostics contract must never carry manage/tenancy/all-resources" || true
+[[ -x "$repo_root/scripts/local/m1-iam-diag-apply.sh" ]] || fail "diagnostics apply script must be executable"
+grep -q 'GATE: IAM-RUN-COMMAND-DIAG' "$repo_root/scripts/local/m1-iam-diag-apply.sh" \
+  || fail "diagnostics apply must require its own written approval gate (never the MYSQL-NSG-IAM record)"
+grep -q 'M1_IAM_PLAN_CONTRACT_DIAG' "$repo_root/scripts/local/m1-iam-diag-apply.sh" \
+  || fail "diagnostics apply must bind the dedicated contract from metadata"
+grep -q 'state-unchanged-since-plan' "$repo_root/scripts/local/m1-iam-diag-apply.sh" \
+  || fail "diagnostics apply must verify the IAM state lineage/serial are unchanged since plan"
+grep -q 'M1_IAM_EXPECT_STATE' "$repo_root/scripts/local/m1-iam-plan.sh" \
+  || fail "iam plan script must support the exists-mode for follow-up packages"
+grep -q 'state_lineage' "$repo_root/scripts/local/m1-iam-plan.sh" \
+  || fail "iam plan exists-mode must record the plan-time lineage for apply-time verification"
+bash tests/ci/test-iam-plan-guard-diag.sh >/dev/null 2>&1 || fail "diagnostics contract fixtures must pass"
+echo "ok: run-command IAM package contracts"

@@ -79,3 +79,40 @@ resource "oci_identity_policy" "mysql_vnic_update" {
     prevent_destroy = true
   }
 }
+
+# Connectivity-diagnostics policy (prepared 2026-10-28, NOT applied; PR kept
+# unmerged until the operator chooses this diagnostic approach). Lets the two
+# existing instances (dynamic group `eventforge-instances`, whose matching
+# rule is exactly the two instance OCIDs) receive Compute Run Command
+# diagnostics so VM→MySQL connectivity can be re-verified without widening
+# any SSH source. Deliberate least privilege per the reviewed mission:
+#   - verb `use` on instance-agent-command-execution-family = READ-only (the
+#     arbitrary-code-execution trigger, INSTANCE_AGENT_COMMAND_EXECUTION_
+#     CREATE, exists only at `manage`, which stays with the operator);
+#   - compartment is the Test compartment, never the tenancy;
+#   - the request/target condition pins each instance to its own commands.
+#   EXECUTION-TIME RISKS (fail-closed, verify on the first approved command):
+#   (1) Oracle's documented dynamic-group form uses `manage` on this family;
+#       with `use` the agent may poll but be unable to report results — if the
+#       command is created but never polled/completed, STOP and prepare a
+#       re-reviewed package; never broaden in place.
+#   (2) `target.instance.id` population for this family is not documented;
+#       per the target.compartment.id finding (b5-mysql-nsg-diagnosis.md §9)
+#       an unpopulated target variable evaluates the condition false and
+#       DENIES — the same re-reviewed-package path applies.
+resource "oci_identity_policy" "instance_run_command_diagnostics" {
+  provider = oci
+
+  name        = "eventforge-instance-run-command-diagnostics"
+  description = "B5 connectivity diagnostics: let the two existing instances (dynamic group eventforge-instances) poll Compute Run Command diagnostics in the Test compartment, read-only, each instance restricted to its own commands."
+
+  compartment_id = var.db_compartment_ocid
+
+  statements = [
+    "Allow dynamic-group eventforge-instances to use instance-agent-command-execution-family in compartment id ${var.db_compartment_ocid} where request.instance.id=target.instance.id",
+  ]
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
