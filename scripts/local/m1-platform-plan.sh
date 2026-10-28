@@ -139,20 +139,23 @@ else
   cat "$M1_EVIDENCE_DIR/logs/safe-plan.log" >&2
 fi
 
-# Attribute-level enforcement at plan time: the dedicated MYSQL-NSG-RETEST
-# policy is checked by BOTH the address-level checker above and the attribute-
-# level scope-A checker here, so a reviewed retest plan is authorized at
+# Attribute-level enforcement at plan time: any selected policy that carries
+# expected attribute values (the dedicated retest and SSH-source-update
+# policies) is checked by BOTH the address-level checker above and the
+# attribute-level scope-A checker here, so a reviewed plan is authorized at
 # attribute granularity before it is ever saved; the apply path rechecks the
-# saved plan independently (m1-platform-apply.sh retest branch).
-if [[ "$M1_SAFE_PLAN_POLICY" == "$M1_MYSQL_RETEST_POLICY" ]]; then
+# saved plan independently under its own approval gate.
+attr_gate="attribute-check"
+[[ "$M1_SAFE_PLAN_POLICY" == "$M1_MYSQL_RETEST_POLICY" ]] && attr_gate="retest-attribute-check"
+if jq -e '.allow[0].expected_attribute_values' "$M1_REPO_ROOT/$M1_SAFE_PLAN_POLICY" >/dev/null 2>&1; then
   if "$M1_REPO_ROOT/scripts/ci/assert-safe-plan-scope-a.sh" \
-       --policy "$M1_REPO_ROOT/$M1_MYSQL_RETEST_POLICY" "$plan_json" \
-       >"$M1_EVIDENCE_DIR/logs/retest-attribute-check.log" 2>&1; then
-    m1_check PASS "retest-attribute-check" "attribute-level MYSQL-NSG-RETEST policy PASS at plan time"
+       --policy "$M1_REPO_ROOT/$M1_SAFE_PLAN_POLICY" "$plan_json" \
+       >"$M1_EVIDENCE_DIR/logs/attribute-check.log" 2>&1; then
+    m1_check PASS "$attr_gate" "attribute-level policy PASS at plan time ($M1_SAFE_PLAN_POLICY)"
   else
     safe_plan="FAIL"
-    m1_check FAIL "retest-attribute-check" "plan violates the attribute-level MYSQL-NSG-RETEST policy — gate stops"
-    cat "$M1_EVIDENCE_DIR/logs/retest-attribute-check.log" >&2
+    m1_check FAIL "$attr_gate" "plan violates the attribute-level policy — gate stops"
+    cat "$M1_EVIDENCE_DIR/logs/attribute-check.log" >&2
   fi
 fi
 
