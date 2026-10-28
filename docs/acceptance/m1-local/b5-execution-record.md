@@ -97,3 +97,50 @@ the db NSG carries the reviewed 3306 ingress from the app NSG, the app NSG
 carries the symmetric egress, and both VM VNICs + the MySQL db system hold
 their NSG memberships — the pairing is correctly configured; what is missing
 is only the runtime proof through it.
+
+## Addendum 2 (2026-10-29T04:45Z): Run Command RECONCILIATION — the "blocked" verdict was a slow-pickup misread; VM1 connectivity is CURRENT-proven
+
+A read-only reconciliation mission re-inventoried the two VM1 commands and
+found that **BOTH had executed successfully** — the PR #50 addendum's
+"stuck/blocked/permanently inert" characterization was WRONG and is hereby
+corrected (the original addendum text above is retained unmodified as
+historical evidence; this section supersedes its conclusions):
+
+| Command | Created | Execution lifecycle | Delivery | Updated | Exit | Output |
+| --- | --- | --- | --- | --- | --- | --- |
+| `…2fffz57rlwgkhnvyl43vl6rrqbbet3pyw72x4jwr5v3q` | 22:35:22Z | **SUCCEEDED** | **ACKED** | 22:52:01Z | 0 | `TCP-3306: CONNECT OK`, greeting `26.10.0-cloud`, `DIAG-EXIT: 0` |
+| `…ptex6j4nxdrhmts433g3h6ash4x33dwg5wnyymbhru4a` | 22:35:16Z | **SUCCEEDED** | **ACKED** | 22:52:00Z | 0 | identical result |
+
+Key corrections:
+
+1. **ACCEPTED / VISIBLE is NONTERMINAL.** The commands sat in ACCEPTED for
+   ~17 minutes before the agent (executing as `ocarun`) picked them up and
+   ran them. "No execution record yet" and "ACCEPTED" are intermediate
+   states, never proof of failure. Command pickup latency of 15–20 minutes
+   must be expected in future polls.
+2. **The `use`-only instance grant works END-TO-END**: the agent read the
+   command, executed it, created/updated its execution record, and reported
+   output + exit code — no IAM broadening is needed for this diagnostic
+   path. The earlier "Oracle's documented form uses manage; use may not
+   report results" concern is resolved empirically as NOT an issue on these
+   instances.
+3. **CURRENT connectivity evidence (post-NSG-attachment): `rust-api-test`
+   reached `10.0.3.18:3306` successfully at 2026-10-28T22:51:57Z and
+   22:52:00Z** — both executions ran AFTER the DB-NSG attachment (22:26Z),
+   proving the app→MySQL path through the new pairing works. The null-byte
+   shell warning in the output is cosmetic (binary greeting captured via
+   command substitution).
+4. **VM2 (`rust-api-worker`) has NO command** — both commands targeted VM1
+   (the duplicate accident). VM2's fresh proof therefore still requires ONE
+   new Run Command execution under a follow-up approval; until then VM2's
+   evidence remains the historical 2026-10-28 greeting. The stale-cancel
+   attempt mentioned in Addendum 1 is moot (both commands SUCCEEDED;
+   `is-canceled = false` on both).
+5. **SL-CORRECTION precondition status**: "fresh in-VM evidence from BOTH
+   VMs" is now HALF-satisfied (VM1 current, VM2 historical). The removal of
+   the transitional `10.0.2.0/24 → 3306` rule still awaits the VM2 proof.
+
+Diagnosis of the original misread: not IAM, not identity propagation, not a
+plugin or delivery failure — pure pickup-latency observation error (polling
+stopped at ~14 minutes; pickup completed at ~17). Remaining uncertainty: the
+agent's exact poll cadence is not observable without guest log access.
