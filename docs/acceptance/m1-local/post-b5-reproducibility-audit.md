@@ -129,3 +129,60 @@ refused by the existing SHA gate); H (stale state lineage/serial refused);
 I (live SSH source inconsistent with the reviewed before-value ⇒ refused).
 Every refusal is asserted to stop BEFORE the `terraform apply` invocation
 (stub apply marker), and case A/F are asserted to reach it.
+
+## Round 3 (same PR): fixed policy-identity allowlist + policy-content integrity
+
+Two remaining policy-identity gaps were closed on top of the round-2
+content-driven classification (which is preserved unchanged):
+
+**Gap 1 — Scope-A under the general gate.** The general PLATFORM-APPLY
+branch still accepted `platform-safe-plan-scope-a-policy.json` as a known
+generic identity, but its apply-time recheck was `assert-safe-plan.sh` only
+— addresses/actions, not Scope-A's approved attribute paths or complete
+change set. **Repair:** Scope-A is treated as HISTORICAL. The general gate
+refuses it explicitly ("HISTORICAL POLICY"); the retained
+`assert-safe-plan-scope-a.sh` checker is NOT weakened or removed (its
+attribute contract is regression-tested via the canonical fixtures). A
+future Scope-A operation requires a dedicated approval class, a complete
+attribute-level plan contract, the scope-A checker at apply time, and a new
+operator-issued approval.
+
+**Gap 2 — environment-configurable allowlist.** The general branch accepted
+whatever `$M1_SAFE_PLAN_POLICY` held at apply time — an override could
+reclassify a plan or change the mandatory approval gate. **Repair:** the
+apply now carries a FIXED allowlist of literal policy identities (default
+general platform policy, dedicated MYSQL-NSG-RETEST policy, dedicated
+SSH-SOURCE-UPDATE policy). No identity is accepted merely because it equals
+an environment variable; unknown identities fail closed with no fallback.
+Plan-side selection is unchanged, but a plan produced under a
+non-allowlisted policy can never be applied.
+
+**Policy-content integrity.** `m1-platform-plan.sh` now records
+`safe_plan_policy_sha256` — the SHA-256 of the exact policy file that
+authorized the plan at plan time. The apply gate requires byte equality
+between that binding and the policy file it revalidates against, AND a
+committed working tree for the policy path (`git diff --quiet HEAD`) — an
+edited, substituted, or uncommitted-tracked-edit policy is refused, with no
+silent fallback to an alternate policy. Metadata lacking the binding
+(pre-integrity plans) is refused and must be re-planned.
+
+**Regression demonstration (round 3; 23 behavioral tests total, all 17
+round-1/2 tests retained).** Case A (generic plan + default policy ⇒
+applies); B (Scope-A metadata routed through PLATFORM-APPLY ⇒ refused,
+"HISTORICAL POLICY"); C (Scope-A plan with an unauthorized attribute
+changed ⇒ refused by the retained scope-A checker — canonical
+`plan-scopea-non-nsg-attr.json` fixture — with the reviewed base change set
+passing as positive control); D (arbitrary `M1_SAFE_PLAN_POLICY` override
+with matching metadata ⇒ refused, "never taken from the environment"); E
+(unknown policy path ⇒ refused); F (policy content modified after plan
+generation ⇒ refused by SHA equality; the uncommitted-edit gate is asserted
+by source contract); G (valid SSH plan with dedicated policy and approval ⇒
+applies); H (SSH plan with downgraded metadata ⇒ refused); I (valid MySQL
+retest plan with dedicated policy and approval ⇒ applies through its
+existing guarded path: offline contract, before/after values, live ACTIVE +
+before-value); J (MySQL plan with downgraded metadata ⇒ refused). Every
+negative case asserts nonzero exit, the correct refusal gate, no
+`terraform apply` invocation (stub marker), and — for refusals firing
+before the read-only live-guard phase — no live OCI call at all (the stub
+OCI exits 99 on any invocation shape it does not implement; all implemented
+shapes are read-only).

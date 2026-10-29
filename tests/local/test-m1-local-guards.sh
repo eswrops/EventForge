@@ -444,12 +444,20 @@ grep -q 'plan_class="SSH-SOURCE-UPDATE"' "$apply_sh" \
   || fail "apply must classify plans by content and select SSH-SOURCE-UPDATE for an operator SSH rule update"
 grep -q 'INCONSISTENT POLICY IDENTITY' "$apply_sh" \
   || fail "apply must fail closed on metadata/plan policy-identity inconsistency (no gate downgrade)"
-grep -q 'UNKNOWN POLICY IDENTITY' "$apply_sh" \
+grep -q 'UNKNOWN OR INCONSISTENT POLICY IDENTITY' "$apply_sh" \
   || fail "apply must fail closed on an unknown metadata policy identity (no PLATFORM-APPLY fallback)"
+grep -q 'HISTORICAL POLICY' "$apply_sh" \
+  || fail "apply must refuse the retired Scope-A policy under the general PLATFORM-APPLY gate"
+grep -q 'safe_plan_policy_sha256' "$apply_sh" \
+  || fail "apply must bind apply-time revalidation to the reviewed policy content (SHA-256 equality)"
+grep -q 'UNCOMMITTED edits' "$apply_sh" \
+  || fail "apply must refuse revalidation against an uncommitted tracked-policy edit"
+grep -q 'safe_plan_policy_sha256' "$repo_root/scripts/local/m1-platform-plan.sh" \
+  || fail "plan generation must record the reviewed policy's SHA-256 in metadata (content integrity binding)"
 grep -q 'platform-policy-recheck' "$apply_sh" \
   || fail "apply must revalidate general PLATFORM-APPLY plans against the reviewed generic policy"
-grep -q 'assert-safe-plan-scope-a.sh" --policy "$M1_REPO_ROOT/$M1_MYSQL_RETEST_POLICY' "$apply_sh" \
-  || fail "apply must revalidate the saved plan against the dedicated retest policy"
+grep -q 'assert-safe-plan-scope-a.sh" --policy "$M1_REPO_ROOT/$POLICY_MYSQL_RETEST' "$apply_sh" \
+  || fail "apply must revalidate the saved plan against the dedicated retest policy (fixed allowlist constant)"
 grep -q 'retest-live-active' "$apply_sh" && grep -q 'retest-live-before' "$apply_sh" \
   || fail "apply must check live MySQL ACTIVE and the reviewed before-value nsg_ids"
 grep -q 'M1_MYSQL_RETEST_POLICY=' "$repo_root/scripts/local/m1-local.env" \
