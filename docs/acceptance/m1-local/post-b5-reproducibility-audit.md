@@ -78,3 +78,54 @@ tests only).
 The deployment is reproducible from the current configuration; reported
 state, live state, and Terraform configuration are mutually consistent; the
 approval-control gap for SSH rotations is closed and regression-tested.
+
+## Round 2 (same PR): metadata-routing weakness closed
+
+**Weakness.** The round-1 correction still selected the required approval
+gate from `metadata.safe_plan_policy` alone. A tampered, absent, or stale
+metadata policy could therefore (a) route a dedicated-gate plan (MySQL NSG
+update / operator SSH rule update) through the general PLATFORM-APPLY gate,
+or (b) fall back open to PLATFORM-APPLY for an unknown policy identity. The
+round-1 tests exercised only the consistent-metadata paths, so this
+metadata-controlled routing was not itself under test.
+
+**Repair (applied-gate hardening, no deployment change).**
+`m1-platform-apply.sh` now dispatches by PLAN CONTENT:
+
+1. **Independent plan classification** — the saved binary plan is rendered
+   once (`terraform show -json`, pinned 1.12.2) and classified before any
+   approval decision: a non-no-op `oci_mysql_mysql_db_system.existing`
+   change ⇒ class MYSQL-NSG-RETEST; a non-no-op
+   `oci_core_network_security_group_security_rule.ssh_from_operator` change
+   ⇒ class SSH-SOURCE-UPDATE; otherwise PLATFORM-APPLY; a plan proposing
+   BOTH protected updates is refused outright.
+2. **Fail-closed policy identity** — a dedicated-class plan must name its
+   dedicated policy in metadata; a general plan must name a KNOWN generic
+   policy (the default or the scope-A policy). Unknown or inconsistent
+   identity fails closed — there is no fallback to PLATFORM-APPLY, and
+   metadata can neither upgrade nor downgrade the gate the plan content
+   requires.
+3. **Gate marker = plan class** — the approval record must carry the
+   content-derived gate; the prior independent MYSQL-NSG-RETEST and
+   SSH-SOURCE-UPDATE gates (offline plan/policy revalidation + live
+   before-value preconditions) are preserved unchanged.
+4. **Apply-time policy verification for EVERY class** — including general
+   PLATFORM-APPLY plans, whose saved plan is re-checked against the
+   metadata-named generic policy immediately before execution;
+   `metadata.safe_plan = PASS` is never accepted as evidence. Plan SHA,
+   source commit, and state lineage/serial consistency checks are unchanged
+   and precede the apply.
+
+**Regression demonstration** (`tests/local/test-m1-apply-guards.sh`, 17
+behavioral tests, fully stubbed, no live OCI calls): case A (valid SSH plan +
+dedicated metadata + SSH-SOURCE-UPDATE record ⇒ applies); B (same SSH plan,
+metadata policy switched to generic + PLATFORM-APPLY record ⇒ refused,
+"INCONSISTENT POLICY IDENTITY"); C (metadata policy absent ⇒ refused, no
+fallback); D (MySQL retest plan with generic metadata ⇒ refused); E
+(protected-import update under the generic policy ⇒ refused by the new
+apply-time recheck); F (general plan + generic policy + reviewed change ⇒
+revalidated and applies); G (changed source commit refused; changed plan SHA
+refused by the existing SHA gate); H (stale state lineage/serial refused);
+I (live SSH source inconsistent with the reviewed before-value ⇒ refused).
+Every refusal is asserted to stop BEFORE the `terraform apply` invocation
+(stub apply marker), and case A/F are asserted to reach it.

@@ -145,9 +145,16 @@ plugin or delivery failure — pure pickup-latency observation error (polling
 stopped at ~14 minutes; pickup completed at ~17). Remaining uncertainty: the
 agent's exact poll cadence is not observable without guest log access.
 
-## Addendum 3 (2026-10-29T05:3xZ): hardening close-out — SSH recovery, SL correction, diagnostics-policy removal EXECUTED
+## Addendum 3 (2026-10-28 UTC — hardening close-out; verified evidence window 23:20:06Z–23:28:57Z; PR #54 merged 2026-10-28T23:31:32Z = 2026-10-29T05:01:31+05:30): SSH recovery, SL correction, diagnostics-policy removal EXECUTED
 
-Operator follow-up "approve all" (2026-10-29) authorized the remaining
+(An earlier version of this heading carried the placeholder timestamp
+"2026-10-29T05:3xZ"; corrected 2026-10-29 from verified execution evidence —
+apply evidence `m1local-20261028T232006Z`, final verify
+`hardening-close-verify-20261028T232857Z`, PR #54 `mergedAt` — the merge
+commit's +05:30 local date is 2026-10-29, its UTC instant is 2026-10-28.)
+
+Operator follow-up "approve all" (2026-10-29 local, i.e. the session of
+2026-10-28T22:34Z–23:28Z UTC) authorized the remaining
 sequence; all steps executed and verified:
 
 1. **SSH-SOURCE-UPDATE (executed)**: dedicated safe-plan policy merged (PR
