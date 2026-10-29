@@ -46,7 +46,9 @@
       "budget": "EXPECTED_COMPUTED — actual_spend/forecasted_spend/time_spend_computed null->0 (acknowledged)",
       "acceptance": "FAIL until separately approved state reconciliation"
     },
-    "B5": "RESOLVED (2026-10-28T22:26Z — MYSQL-NSG-RETEST work request SUCCEEDED on the one authorized attempt; live+state nsg_ids=[eventforge-db-nsg]; verify 19/0 — see docs/acceptance/m1-local/b5-execution-record.md)"
+    "B5": "RESOLVED (2026-10-28T22:26Z — MYSQL-NSG-RETEST work request SUCCEEDED on the one authorized attempt; live+state nsg_ids=[eventforge-db-nsg]; verify 19/0 — see docs/acceptance/m1-local/b5-execution-record.md)",
+    "B5_HARDENING_CLOSE_OUT": "PASS (2026-10-28, audit-confirmed 2026-10-29 — SSH source refreshed on BOTH controls to 49.207.216.108/32 (two-VM SSH acceptance PASS); both-VM 3306 proof 23:22Z pre-removal; transitional 10.0.2.0/24→3306 SL rule REMOVED with immediate post-removal proof on BOTH VMs 23:23Z; diagnostics IAM policy REMOVED (IAM state serial 3 = exactly the two MySQL policies); final verify 19/0, drift clean — b5-execution-record.md Addendum 3)",
+    "POST_B5_REPRODUCIBILITY_AUDIT": "PASS (2026-10-29, read-only at main 67c7991 — Phase 1 reconciliation MATCH: platform lineage cdda242b… serial 14, IAM lineage 2d169472… serial 3, both VNICs in app NSG, db SL ingress [], SSH /32 equal on SL+NSG, LB zero listeners, diagnostics policy absent; Phase 2: refreshing plan with pinned Terraform 1.12.2 = 37 addresses, zero changes, zero drift, applyable=false; Phase 3: SSH apply-gate deviation documented and corrected — future SSH rotations require GATE: SSH-SOURCE-UPDATE with apply-time plan/policy/live recheck + 4 behavioral regression tests — see docs/acceptance/m1-local/post-b5-reproducibility-audit.md)"
   },
   "import_execution": {
     "date": "2026-10-27",

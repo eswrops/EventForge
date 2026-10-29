@@ -48,6 +48,7 @@ while [[ \$# -gt 0 ]]; do
     -chdir=*) ;;
     workspace) [[ "\${2:-}" == show ]] && { echo default; exit 0; } ;;
     state) [[ "\${2:-}" == pull ]] && { cat "\$state_file"; exit 0; } ;;
+    show) [[ "\${2:-}" == -json ]] && { cat "\${3}.json"; exit 0; } ;;
     apply) [[ "\${STUB_APPLY_RC:-0}" == 1 ]] && { echo "stub apply failure" >&2; exit 1; }; exit 0 ;;
   esac
   shift
@@ -70,6 +71,7 @@ case "\$1 \$2 \$3" in
   "kms management key") printf '{"data":{"lifecycle-state":"ENABLED"}}'; exit 0 ;;
   "os object head")  exit 0 ;;
   "os object list")  printf '{"data":[]}'; exit 0 ;;
+  "network nsg rules") printf '{"data":[{"id":"%s","source":"%s","direction":"INGRESS","protocol":"6"}]}' "\${STUB_RULE_ID:-0DE088}" "\${STUB_RULE_SOURCE:-49.207.214.221/32}"; exit 0 ;;
 esac
 echo "unexpected oci invocation: \$*" >&2
 exit 99
@@ -90,19 +92,21 @@ printf '{"lineage":"test-lineage-1","serial":10,"outputs":{}}' > "$stub_state"
 export STUB_STATE_FILE="$stub_state"
 unset STUB_APPLY_RC || true
 
-make_artifacts() { # make_artifacts <plan-file> <metadata-file> <record-file> [lineage]
+make_artifacts() { # make_artifacts <plan-file> <metadata-file> <record-file> [lineage] [safe_plan_policy] [gate-marker]
   local plan="$1" meta="$2" record="$3" lineage="${4:-test-lineage-1}"
+  local policy="${5:-}" gate="${6:-PLATFORM-APPLY}"
   printf 'PLANBYTES-%s' "$RANDOM" > "$plan"
   local sha
   sha="$(shasum -a 256 "$plan" | awk '{print $1}')"
   jq -n --arg plan "$plan" --arg sha "$sha" --arg commit "$commit" \
-    --arg lineage "$lineage" --argjson serial 10 \
+    --arg lineage "$lineage" --argjson serial 10 --arg policy "$policy" \
     '{plan:$plan, plan_json:($plan + ".json"), plan_sha256:$sha, commit:$commit,
       operator:"test-operator", state_lineage:$lineage, state_serial:$serial,
-      safe_plan:"PASS", proposed_import_updates:0, non_noop_changes:0,
+      safe_plan:"PASS", safe_plan_policy:(if $policy == "" then null else $policy end),
+      proposed_import_updates:0, non_noop_changes:0,
       terraform_version:"1.12.2", bucket:"b", state_key:"k",
       applied:false, apply_evidence:null, timestamp:"2026-10-27T00:00:00Z"}' > "$meta"
-  printf 'GATE: PLATFORM-APPLY\nAPPROVER: test-operator\nCOMMIT: %s\nPLAN_SHA256: %s\n' "$commit" "$sha" > "$record"
+  printf 'GATE: %s\nAPPROVER: test-operator\nCOMMIT: %s\nPLAN_SHA256: %s\n' "$gate" "$commit" "$sha" > "$record"
 }
 
 run_apply() { # run_apply <plan> <meta> <record>
@@ -165,5 +169,63 @@ if run_apply "$work/plan-f.tfplan" "$work/meta-f.json" "$work/record-f.md" 2>/de
 fi
 grep -q "already applied" "$work/err.log" || fail "consumed approval must refuse replay"
 echo "ok: failed apply consumes its approval record"
+
+# 8–11. SSH-SOURCE-UPDATE apply gate: a plan reviewed against the dedicated
+# SSH policy requires the separate SSH-SOURCE-UPDATE approval record, the
+# saved plan is revalidated offline against the policy, and the LIVE SSH rule
+# must still hold the reviewed before-value source (the 2026-10-29 audit
+# deviation: apply consumed a general PLATFORM-APPLY record with no SSH-specific
+# recheck).
+ssh_policy="scripts/ci/platform-safe-plan-ssh-update-policy.json"
+
+make_ssh_plan() { # make_ssh_plan <plan-file> — reviewed one-rule /32 update + rule/NSG ids
+  local plan="$1"
+  cp "$repo_root/tests/ci/fixtures/plan-ssh-base.json" "$plan"
+  jq -c '.resource_changes[0].change.before.id = "0DE088"
+       | .resource_changes[0].change.after.id = "0DE088"
+       | .resource_changes[0].change.before.network_security_group_id = "ocid1.networksecuritygroup.oc1.ap-hyderabad-1.testnsg"
+       | .resource_changes[0].change.after.network_security_group_id = "ocid1.networksecuritygroup.oc1.ap-hyderabad-1.testnsg"' \
+    "$plan" > "$plan.aug" && mv "$plan.aug" "$plan"
+  cp "$plan" "$plan.json"
+}
+
+# 8. SSH-gated plan under a general PLATFORM-APPLY record → refused.
+make_ssh_plan "$work/plan-ssh.tfplan"
+make_artifacts "$work/plan-ssh.tfplan" "$work/meta-ssh.json" "$work/record-ssh-generic.md" \
+  test-lineage-1 "$ssh_policy" PLATFORM-APPLY
+run_apply "$work/plan-ssh.tfplan" "$work/meta-ssh.json" "$work/record-ssh-generic.md" 2>/dev/null \
+  && fail "SSH-gated plan must refuse a general PLATFORM-APPLY record"
+grep -q "GATE: SSH-SOURCE-UPDATE" "$work/err.log" || { cat "$work/err.log"; fail "SSH gate refusal message missing"; }
+[[ "$(jq -r .applied "$work/meta-ssh.json")" == "false" ]] || fail "refused SSH plan must not be marked applied"
+echo "ok: SSH-gated plan refuses the general PLATFORM-APPLY record"
+
+# 9. SSH-gated plan under the dedicated record with a matching live source → applies.
+make_ssh_plan "$work/plan-ssh2.tfplan"
+make_artifacts "$work/plan-ssh2.tfplan" "$work/meta-ssh2.json" "$work/record-ssh2.md" \
+  test-lineage-1 "$ssh_policy" SSH-SOURCE-UPDATE
+run_apply "$work/plan-ssh2.tfplan" "$work/meta-ssh2.json" "$work/record-ssh2.md" \
+  || { cat "$work/err.log"; fail "SSH-gated plan must apply under GATE: SSH-SOURCE-UPDATE"; }
+grep -q "ssh-update-live-before" "$work/out.log" || fail "live SSH precondition gate missing from apply output"
+[[ "$(jq -r .applied "$work/meta-ssh2.json")" == "true" ]] || fail "applied SSH plan must be marked applied"
+echo "ok: SSH-SOURCE-UPDATE gate applies the reviewed rotation end-to-end"
+
+# 10. Live SSH rule source moved since review → stale plan refused (fail closed).
+make_ssh_plan "$work/plan-ssh3.tfplan"
+make_artifacts "$work/plan-ssh3.tfplan" "$work/meta-ssh3.json" "$work/record-ssh3.md" \
+  test-lineage-1 "$ssh_policy" SSH-SOURCE-UPDATE
+STUB_RULE_SOURCE="49.207.199.199/32" run_apply "$work/plan-ssh3.tfplan" "$work/meta-ssh3.json" "$work/record-ssh3.md" 2>/dev/null \
+  && fail "stale live SSH source must be refused"
+grep -q "re-plan and re-review" "$work/err.log" || { cat "$work/err.log"; fail "stale live SSH refusal message missing"; }
+echo "ok: stale live SSH source refuses the rotation apply"
+
+# 11. Saved plan diverging from the dedicated policy → refused offline, before any live access.
+make_artifacts "$work/plan-ssh-bad.tfplan" "$work/meta-ssh-bad.json" "$work/record-ssh-bad.md" \
+  test-lineage-1 "$ssh_policy" SSH-SOURCE-UPDATE
+cp "$repo_root/tests/ci/fixtures/plan-ssh-wrong-target.json" "$work/plan-ssh-bad.tfplan.json"
+run_apply "$work/plan-ssh-bad.tfplan" "$work/meta-ssh-bad.json" "$work/record-ssh-bad.md" 2>/dev/null \
+  && fail "SSH plan diverging from the policy must be refused"
+grep -q "does not match the dedicated SSH-SOURCE-UPDATE policy" "$work/err.log" \
+  || { cat "$work/err.log"; fail "SSH plan-contract refusal message missing"; }
+echo "ok: SSH plan diverging from the reviewed policy refused offline"
 
 echo "M1-LOCAL apply-guard behavioral tests passed"

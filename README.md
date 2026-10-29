@@ -2,6 +2,26 @@
 
 Terraform and operational scaffolding for the EventForge production deployment.
 
+## Current deployment status (2026-10-29)
+
+- **B5 RESOLVED and hardened**: MySQL `rust-api-heatwave` is ACTIVE inside
+  `eventforge-db-nsg`; the transitional subnet-wide `10.0.2.0/24 → 3306`
+  security-list rule has been REMOVED. The app-NSG↔db-NSG 3306 pairing is the
+  sole live-proven MySQL path (post-removal greeting evidence from BOTH VMs,
+  2026-10-28T23:23Z).
+- **SSH is /32-restricted on both controls** (app security list and app NSG
+  both pin the operator's current IP, port 22 only).
+- **Diagnostics IAM policy REMOVED**; IAM state holds exactly the two MySQL
+  resource-principal policies. Platform state serial 14, lineage
+  `cdda242b…`; IAM state serial 3, lineage `2d169472…`.
+- **Reproducibility verified 2026-10-29** (read-only audit): refreshing plan
+  with pinned Terraform 1.12.2 = zero changes, zero drift — see
+  [docs/acceptance/m1-local/post-b5-reproducibility-audit.md](docs/acceptance/m1-local/post-b5-reproducibility-audit.md).
+- Still outstanding: ONS subscription confirmation **PENDING** (B3);
+  OCI-FEDERATION **DEFERRED** (Oracle SR); application deployment
+  **NOT_STARTED** (M2). Public API ingress remains disabled (LB zero
+  listeners).
+
 ## Layout
 
 - `infra/bootstrap` creates the versioned OCI Terraform-state bucket, backup bucket, and OCI IAM foundations.

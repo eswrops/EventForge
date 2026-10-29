@@ -96,3 +96,30 @@ require their own approvals: post-retest in-VM connectivity proof (Run
 Command, approval C), then the SL-CORRECTION window
 ([db-sl-3306-correction-approval.md](db-sl-3306-correction-approval.md)), and
 diagnostics-policy removal after that window.
+
+## Hardening close-out AUDIT-CONFIRMED + reproducibility PASS (2026-10-29)
+
+(The follow-ups listed above were all executed 2026-10-28 under operator
+approval — [b5-execution-record.md](b5-execution-record.md) Addendum 3. The
+read-only audit below re-verified each item live at main `67c7991…`.)
+
+A reproducibility/consistency audit re-verified the entire close-out and
+reconciled the reported, live, and configured states
+([post-b5-reproducibility-audit.md](post-b5-reproducibility-audit.md)):
+
+| Item | Status (2026-10-29, audit-verified) |
+| --- | --- |
+| B5 / MySQL DB-NSG | **RESOLVED + HARDENED** — `rust-api-heatwave` ACTIVE with `nsg_ids=[eventforge-db-nsg]`; platform state `cdda242b…` serial 14 matches live |
+| NSG-only database path | **VERIFIED** — db SL ingress `[]` (transitional `10.0.2.0/24 → 3306` rule gone); the app-NSG↔db-NSG 3306 pairing is the sole MySQL path |
+| Both-VM post-removal connectivity | **PASS** — both VMs TCP-3306 CONNECT OK + greeting + exit 0 at 2026-10-28T23:23:49/51Z, after the rule removal |
+| Diagnostics IAM policy | **REMOVED** — absent from OCI and IAM state; IAM state `2d169472…` serial 3 = exactly the two MySQL policies, both ACTIVE |
+| SSH source | **/32-RESTRICTED on BOTH controls** — app SL and app NSG both pin `49.207.216.108/32`, port 22 only; `operator_ssh_cidr` input matches |
+| Terraform reproducibility | **PASS** — refreshing plan (pinned 1.12.2): 37 addresses, zero changes, zero drift, no deletes/replacements, `applyable=false`; nothing applied |
+| Approval-control correction | **PREPARED IN THIS TRACK** — future SSH rotations require `GATE: SSH-SOURCE-UPDATE` (dedicated apply-time recheck of the saved plan against the dedicated policy + live before-value source); 4 behavioral regression tests added |
+| ONS B3 | **PENDING** (unchanged — confirmation email not clicked) |
+| OCI-FEDERATION | **DEFERRED** (unchanged — Oracle SR required) |
+| Application deployment | **NOT_STARTED** (unchanged — M2) |
+
+`m1-verify.sh` re-run during the audit: **19 PASS / 0 FAIL**, drift clean.
+No OCI mutation, no Terraform apply, and no state push occurred during the
+audit; historical evidence above is preserved unmodified.
