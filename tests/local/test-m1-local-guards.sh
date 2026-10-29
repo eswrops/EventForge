@@ -433,13 +433,31 @@ grep -q 'acknowledged computed drift only' "$verify_sh" \
   || fail "verify must report expected computed drift as acknowledged, never silent zero"
 echo "ok: refreshing-plan contract (regression 8)"
 
-# (4, retest) The dedicated MYSQL-NSG-RETEST gate: separate approval marker,
-# offline plan recheck, and live before/after preconditions in the apply path.
+# (4, retest) The dedicated MYSQL-NSG-RETEST gate: the gate marker is derived
+# from the SAVED PLAN'S ACTUAL CHANGES (content-driven classification, never
+# metadata.safe_plan_policy alone), the offline plan recheck, and live
+# before/after preconditions in the apply path.
 apply_sh="$repo_root/scripts/local/m1-platform-apply.sh"
-grep -q 'required_gate="MYSQL-NSG-RETEST"' "$apply_sh" \
-  || fail "apply must select the separate MYSQL-NSG-RETEST gate for retest plans"
-grep -q 'assert-safe-plan-scope-a.sh" --policy "$M1_REPO_ROOT/$M1_MYSQL_RETEST_POLICY' "$apply_sh" \
-  || fail "apply must revalidate the saved plan against the dedicated retest policy"
+grep -q 'plan_class="MYSQL-NSG-RETEST"' "$apply_sh" \
+  || fail "apply must classify plans by content and select MYSQL-NSG-RETEST for a protected MySQL NSG update"
+grep -q 'plan_class="SSH-SOURCE-UPDATE"' "$apply_sh" \
+  || fail "apply must classify plans by content and select SSH-SOURCE-UPDATE for an operator SSH rule update"
+grep -q 'INCONSISTENT POLICY IDENTITY' "$apply_sh" \
+  || fail "apply must fail closed on metadata/plan policy-identity inconsistency (no gate downgrade)"
+grep -q 'UNKNOWN OR INCONSISTENT POLICY IDENTITY' "$apply_sh" \
+  || fail "apply must fail closed on an unknown metadata policy identity (no PLATFORM-APPLY fallback)"
+grep -q 'HISTORICAL POLICY' "$apply_sh" \
+  || fail "apply must refuse the retired Scope-A policy under the general PLATFORM-APPLY gate"
+grep -q 'safe_plan_policy_sha256' "$apply_sh" \
+  || fail "apply must bind apply-time revalidation to the reviewed policy content (SHA-256 equality)"
+grep -q 'UNCOMMITTED edits' "$apply_sh" \
+  || fail "apply must refuse revalidation against an uncommitted tracked-policy edit"
+grep -q 'safe_plan_policy_sha256' "$repo_root/scripts/local/m1-platform-plan.sh" \
+  || fail "plan generation must record the reviewed policy's SHA-256 in metadata (content integrity binding)"
+grep -q 'platform-policy-recheck' "$apply_sh" \
+  || fail "apply must revalidate general PLATFORM-APPLY plans against the reviewed generic policy"
+grep -q 'assert-safe-plan-scope-a.sh" --policy "$M1_REPO_ROOT/$POLICY_MYSQL_RETEST' "$apply_sh" \
+  || fail "apply must revalidate the saved plan against the dedicated retest policy (fixed allowlist constant)"
 grep -q 'retest-live-active' "$apply_sh" && grep -q 'retest-live-before' "$apply_sh" \
   || fail "apply must check live MySQL ACTIVE and the reviewed before-value nsg_ids"
 grep -q 'M1_MYSQL_RETEST_POLICY=' "$repo_root/scripts/local/m1-local.env" \

@@ -4,18 +4,29 @@
 #   m1-platform-apply.sh <plan.tfplan> <metadata.json> <approval-record>
 #
 # The apply refuses any mismatch against the reviewed metadata (SHA-256,
-# source commit, safe-plan verdict, remote state lineage/serial) AND requires
-# a written approval record containing "GATE: PLATFORM-APPLY" (or, when the
-# plan was reviewed against the dedicated MySQL retest policy, the separate
-# "GATE: MYSQL-NSG-RETEST" — the two approval gates are never interchangeable),
-# the plan's SHA-256, the source commit, and an APPROVER: line matching the
-# M1_APPLY_APPROVED_BY environment attestation — authorization is never
-# granted by an environment variable alone or by a passed policy check.
-# For the retest gate the saved plan is additionally revalidated offline
-# against the dedicated policy and the live MySQL must be ACTIVE with exactly
-# the reviewed before-value nsg_ids. It never generates a new plan, never uses
-# -auto-approve, retains locking, and on any failure stops with preserved logs
-# and NO automatic retry or rollback (mission rules 11–14).
+# source commit, remote state lineage/serial) AND requires a written approval
+# record whose GATE marker is derived from the SAVED PLAN'S ACTUAL CHANGES
+# (independent classification): a plan proposing the protected MySQL nsg_ids
+# update always requires "GATE: MYSQL-NSG-RETEST", a plan proposing the
+# operator SSH NSG-rule source update always requires
+# "GATE: SSH-SOURCE-UPDATE", everything else requires "GATE: PLATFORM-APPLY".
+# metadata.safe_plan_policy can neither upgrade nor downgrade this dispatch —
+# the accepted policy identities are a FIXED allowlist (default general
+# policy, dedicated MYSQL-NSG-RETEST policy, dedicated SSH-SOURCE-UPDATE
+# policy; the scope-A policy is historical and refused), never taken from the
+# environment, and an unknown or inconsistent policy identity fails closed.
+# The saved binary plan is re-verified against its reviewed policy
+# immediately before execution (metadata.safe_plan is never accepted as
+# evidence), and the reviewed policy's CONTENT is integrity-bound: the plan
+# records the policy's SHA-256 at plan time and the apply requires byte
+# equality plus a committed working tree. The APPROVER:
+# line must match the M1_APPLY_APPROVED_BY environment attestation —
+# authorization is never granted by an environment variable alone or by a
+# passed policy check. For the dedicated gates the live preconditions are
+# additionally re-verified (MySQL ACTIVE with the reviewed before-value
+# nsg_ids; SSH rule source at the reviewed before-value). It never generates a
+# new plan, never uses -auto-approve, retains locking, and on any failure
+# stops with preserved logs and NO automatic retry or rollback (rules 11–14).
 set -uo pipefail
 
 # shellcheck source=scripts/local/lib-m1.sh
@@ -76,22 +87,96 @@ commit="$(git -C "$M1_REPO_ROOT" rev-parse HEAD)"
   && m1_check PASS "metadata-not-applied" "plan not previously applied" \
   || fail_gate metadata-not-applied "this plan was already applied"
 
+# Independent plan classification (content-driven dispatch) -------------------
+# The required approval gate is derived from the SAVED PLAN'S ACTUAL CHANGES,
+# never from metadata.safe_plan_policy alone: a tampered, missing, or stale
+# metadata policy can no longer route a dedicated-gate plan through the
+# general gate, and an unknown or inconsistent policy identity fails closed
+# (no fallback to PLATFORM-APPLY). The rendered plan JSON is reused for every
+# later recheck — the saved binary plan, not metadata.safe_plan, is the
+# verified artifact.
+class_json="$M1_EVIDENCE_DIR/state/saved-plan.json"
+"$M1_TERRAFORM_BIN" -chdir="$root" show -json "$plan_file" > "$class_json" \
+  2>"$M1_EVIDENCE_DIR/logs/saved-plan-show.err" \
+  || fail_gate plan-classification "could not render the saved plan for independent classification"
+chmod 600 "$class_json"
+mysql_updates="$(jq -r '[.resource_changes[]? | select(.address == "oci_mysql_mysql_db_system.existing" and .change.actions != ["no-op"])] | length' "$class_json")"
+ssh_updates="$(jq -r '[.resource_changes[]? | select(.address == "oci_core_network_security_group_security_rule.ssh_from_operator" and .change.actions != ["no-op"])] | length' "$class_json")"
+if [[ "$mysql_updates" -ge 1 && "$ssh_updates" -ge 1 ]]; then
+  fail_gate plan-classification \
+    "plan proposes BOTH the protected MySQL NSG update and the operator SSH rule update — no single approval gate covers both; split the plan"
+elif [[ "$mysql_updates" -ge 1 ]]; then
+  plan_class="MYSQL-NSG-RETEST"
+elif [[ "$ssh_updates" -ge 1 ]]; then
+  plan_class="SSH-SOURCE-UPDATE"
+else
+  plan_class="PLATFORM-APPLY"
+fi
+
+# Fixed policy-identity allowlist (round-3 hardening) -------------------------
+# These literals are the ONLY accepted policy identities. They are never
+# derived from an environment variable: an overridden M1_SAFE_PLAN_POLICY (or
+# any other env value) cannot reclassify a plan or change the mandatory
+# approval gate. Unknown identities fail closed. Scope-A is HISTORICAL — the
+# general PLATFORM-APPLY gate no longer accepts it, because the general
+# apply-time check it used to receive validated addresses/actions only, not
+# Scope-A's approved attribute paths. A future Scope-A operation needs a
+# dedicated approval class, a complete attribute-level plan contract, the
+# scope-A checker at apply time, and a new operator approval.
+POLICY_GENERAL="scripts/ci/platform-safe-plan-policy.json"
+POLICY_MYSQL_RETEST="scripts/ci/platform-safe-plan-mysql-retest-policy.json"
+POLICY_SSH_UPDATE="scripts/ci/platform-safe-plan-ssh-update-policy.json"
+POLICY_SCOPE_A_HISTORICAL="scripts/ci/platform-safe-plan-scope-a-policy.json"
+
+case "$plan_class" in
+  MYSQL-NSG-RETEST) expected_policy="$POLICY_MYSQL_RETEST" ;;
+  SSH-SOURCE-UPDATE) expected_policy="$POLICY_SSH_UPDATE" ;;
+  *)                expected_policy="$POLICY_GENERAL" ;;
+esac
+if [[ "$plan_class" == "PLATFORM-APPLY" && "$meta_safe_plan_policy" == "$POLICY_SCOPE_A_HISTORICAL" ]]; then
+  fail_gate policy-identity \
+    "HISTORICAL POLICY: '$POLICY_SCOPE_A_HISTORICAL' is retired and never accepted by the general PLATFORM-APPLY gate (its former apply-time check validated addresses/actions only, not Scope-A's approved attribute paths). A future Scope-A operation requires a dedicated approval class, a complete attribute-level plan contract, the scope-A checker at apply time, and a new operator approval"
+elif [[ "$meta_safe_plan_policy" == "$expected_policy" ]]; then
+  m1_check PASS "policy-identity" "$plan_class plan names its fixed allowlisted policy ($meta_safe_plan_policy)"
+else
+  fail_gate policy-identity \
+    "UNKNOWN OR INCONSISTENT POLICY IDENTITY: metadata.safe_plan_policy is '${meta_safe_plan_policy:-<absent>}' — the $plan_class gate requires exactly '$expected_policy'; the accepted set is FIXED (default general policy, dedicated MYSQL-NSG-RETEST policy, dedicated SSH-SOURCE-UPDATE policy) and never taken from the environment; refusing"
+fi
+
+# Policy-content integrity (round-3 hardening): apply-time revalidation must
+# consume the SAME reviewed policy content that authorized the plan at plan
+# time. The canonical repo-relative path is the metadata value (just
+# allowlisted above); the plan records the policy's SHA-256, and the apply
+# requires byte equality plus a clean committed working tree — an edited,
+# substituted, or uncommitted-tracked-edit policy is refused, with no
+# fallback to any alternate policy.
+policy_file="$M1_REPO_ROOT/$meta_safe_plan_policy"
+meta_policy_sha="$(jq -r '.safe_plan_policy_sha256 // empty' "$metadata_file")"
+[[ -f "$policy_file" ]] \
+  || fail_gate policy-integrity "the allowlisted policy file is missing: $meta_safe_plan_policy"
+[[ -n "$meta_policy_sha" ]] \
+  || fail_gate policy-integrity "plan metadata carries no safe_plan_policy_sha256 binding — this metadata predates policy-content integrity; re-plan and re-review"
+actual_policy_sha="$(shasum -a 256 "$policy_file" | awk '{print $1}')"
+[[ "$meta_policy_sha" == "$actual_policy_sha" ]] \
+  && m1_check PASS "policy-integrity" "reviewed policy content unchanged since plan ($meta_safe_plan_policy sha $actual_policy_sha)" \
+  || fail_gate policy-integrity \
+       "REVIEWED POLICY CONTENT CHANGED since plan generation: metadata binds $meta_policy_sha but the file now hashes $actual_policy_sha ($meta_safe_plan_policy) — re-plan against the committed policy; never silent-fallback to an alternate policy"
+git -C "$M1_REPO_ROOT" diff --quiet HEAD -- "$meta_safe_plan_policy" 2>/dev/null \
+  || fail_gate policy-integrity \
+       "the reviewed policy has UNCOMMITTED edits (working tree differs from HEAD for $meta_safe_plan_policy) — commit the reviewed policy, then re-plan; applying against unreviewed policy text is refused"
+
 # Written approval record — the plan SHA-256 and commit must be named in it,
 # and the operator's env attestation must match the record's APPROVER line.
-# A plan reviewed against the dedicated MYSQL-NSG-RETEST policy requires the
-# SEPARATE MYSQL-NSG-RETEST approval gate: a general PLATFORM-APPLY record
-# never authorizes the MySQL NSG retest (and the retest record never
-# authorizes a general platform apply).
-required_gate="PLATFORM-APPLY"
+# The gate marker is chosen by PLAN CONTENT (above): a plan proposing the
+# protected MySQL NSG update always requires GATE: MYSQL-NSG-RETEST, a plan
+# proposing the operator SSH rule update always requires
+# GATE: SSH-SOURCE-UPDATE — a general PLATFORM-APPLY record never authorizes
+# either dedicated change, whatever metadata says.
+required_gate="$plan_class"
 retest_gate=0
 ssh_update_gate=0
-if [[ "$meta_safe_plan_policy" == "$M1_MYSQL_RETEST_POLICY" ]]; then
-  retest_gate=1
-  required_gate="MYSQL-NSG-RETEST"
-elif [[ "$meta_safe_plan_policy" == "$M1_SSH_UPDATE_POLICY" ]]; then
-  ssh_update_gate=1
-  required_gate="SSH-SOURCE-UPDATE"
-fi
+[[ "$plan_class" == "MYSQL-NSG-RETEST" ]] && retest_gate=1
+[[ "$plan_class" == "SSH-SOURCE-UPDATE" ]] && ssh_update_gate=1
 if m1_verify_approval_record "$approval_record" "$required_gate" "$plan_sha" "$commit"; then
   record_approver="$(awk -F': ' '/^APPROVER:/{print $2; exit}' "$approval_record")"
   [[ "$record_approver" == "$M1_APPLY_APPROVED_BY" ]] \
@@ -99,7 +184,7 @@ if m1_verify_approval_record "$approval_record" "$required_gate" "$plan_sha" "$c
     || fail_gate approval-record "M1_APPLY_APPROVED_BY does not match the record's APPROVER line"
 else
   fail_gate approval-record \
-    "invalid or missing approval record ($approval_record): it must contain 'GATE: $required_gate', the plan SHA-256 $plan_sha, commit $commit, and an APPROVER: line (a plan reviewed against the MYSQL-NSG-RETEST policy always requires GATE: MYSQL-NSG-RETEST, and a plan reviewed against the SSH-SOURCE-UPDATE policy always requires GATE: SSH-SOURCE-UPDATE — the general PLATFORM-APPLY record never authorizes either dedicated gate)"
+    "invalid or missing approval record ($approval_record): it must contain 'GATE: $required_gate', the plan SHA-256 $plan_sha, commit $commit, and an APPROVER: line (the gate is derived from the saved plan's actual changes — the general PLATFORM-APPLY record never authorizes a MYSQL-NSG-RETEST or SSH-SOURCE-UPDATE change)"
 fi
 
 # Live guards -----------------------------------------------------------------
@@ -152,15 +237,13 @@ read -r live_lineage live_serial <<<"$(m1_state_meta "$pre_pull")"
 # must still hold against the LIVE db system, and MySQL must be ACTIVE — all
 # re-verified immediately before execution.
 if [[ "$retest_gate" -eq 1 ]]; then
-  recheck_json="$M1_EVIDENCE_DIR/state/retest-plan-recheck.json"
-  "$M1_TERRAFORM_BIN" -chdir="$root" show -json "$plan_file" > "$recheck_json" \
-    2>"$M1_EVIDENCE_DIR/logs/retest-plan-recheck-show.err" \
-    || fail_gate retest-contract "could not render the saved plan for the MYSQL-NSG-RETEST recheck"
-  chmod 600 "$recheck_json"
+  # The saved plan was already rendered for classification (state/saved-plan.json);
+  # reuse that verified rendering — never re-derive from metadata.
+  recheck_json="$class_json"
 
   # Offline: the saved plan matches the dedicated policy (exactly one in-place
   # MySQL nsg_ids update, before/after values as reviewed, nothing else).
-  if "$M1_REPO_ROOT/scripts/ci/assert-safe-plan-scope-a.sh" --policy "$M1_REPO_ROOT/$M1_MYSQL_RETEST_POLICY" "$recheck_json" \
+  if "$M1_REPO_ROOT/scripts/ci/assert-safe-plan-scope-a.sh" --policy "$M1_REPO_ROOT/$POLICY_MYSQL_RETEST" "$recheck_json" \
        >"$M1_EVIDENCE_DIR/logs/retest-contract.log" 2>&1; then
     m1_check PASS "retest-plan-contract" "saved plan revalidated: exactly the reviewed one-entry nsg_ids update"
   else
@@ -169,8 +252,8 @@ if [[ "$retest_gate" -eq 1 ]]; then
   fi
 
   # Expected before/after values, read from the reviewed policy itself.
-  expected_before="$(jq -r '.allow[0].expected_attribute_values_before.nsg_ids | sort | join(",")' "$M1_REPO_ROOT/$M1_MYSQL_RETEST_POLICY")"
-  expected_after="$(jq -r '.allow[0].expected_attribute_values.nsg_ids | sort | join(",")' "$M1_REPO_ROOT/$M1_MYSQL_RETEST_POLICY")"
+  expected_before="$(jq -r '.allow[0].expected_attribute_values_before.nsg_ids | sort | join(",")' "$M1_REPO_ROOT/$POLICY_MYSQL_RETEST")"
+  expected_after="$(jq -r '.allow[0].expected_attribute_values.nsg_ids | sort | join(",")' "$M1_REPO_ROOT/$POLICY_MYSQL_RETEST")"
   plan_before="$(jq -r '[.resource_changes[]? | select(.address == "oci_mysql_mysql_db_system.existing")][0].change.before.nsg_ids // [] | sort | join(",")' "$recheck_json")"
   plan_after="$(jq -r '[.resource_changes[]? | select(.address == "oci_mysql_mysql_db_system.existing")][0].change.after.nsg_ids // [] | sort | join(",")' "$recheck_json")"
   db_system_id="$(jq -r '[.resource_changes[]? | select(.address == "oci_mysql_mysql_db_system.existing")][0].change.before.id // .change.after.id // empty' "$recheck_json")"
@@ -205,15 +288,12 @@ fi
 # consumed a general PLATFORM-APPLY record with no SSH-specific recheck) is
 # closed for every future rotation.
 if [[ "$ssh_update_gate" -eq 1 ]]; then
-  ssh_recheck_json="$M1_EVIDENCE_DIR/state/ssh-update-plan-recheck.json"
-  "$M1_TERRAFORM_BIN" -chdir="$root" show -json "$plan_file" > "$ssh_recheck_json" \
-    2>"$M1_EVIDENCE_DIR/logs/ssh-update-plan-recheck-show.err" \
-    || fail_gate ssh-update-contract "could not render the saved plan for the SSH-SOURCE-UPDATE recheck"
-  chmod 600 "$ssh_recheck_json"
+  # Reuse the classification rendering of the saved plan (state/saved-plan.json).
+  ssh_recheck_json="$class_json"
 
   # Offline: the saved plan matches the dedicated policy (exactly one
   # ssh_from_operator source update, before/after values as reviewed, nothing else).
-  if "$M1_REPO_ROOT/scripts/ci/assert-safe-plan-scope-a.sh" --policy "$M1_REPO_ROOT/$M1_SSH_UPDATE_POLICY" "$ssh_recheck_json" \
+  if "$M1_REPO_ROOT/scripts/ci/assert-safe-plan-scope-a.sh" --policy "$M1_REPO_ROOT/$POLICY_SSH_UPDATE" "$ssh_recheck_json" \
        >"$M1_EVIDENCE_DIR/logs/ssh-update-contract.log" 2>&1; then
     m1_check PASS "ssh-update-plan-contract" "saved plan revalidated: exactly the reviewed one-rule /32 source update"
   else
@@ -222,8 +302,8 @@ if [[ "$ssh_update_gate" -eq 1 ]]; then
   fi
 
   # Expected before/after values, read from the reviewed policy itself.
-  expected_before="$(jq -r '.allow[0].expected_attribute_values_before.source' "$M1_REPO_ROOT/$M1_SSH_UPDATE_POLICY")"
-  expected_after="$(jq -r '.allow[0].expected_attribute_values.source' "$M1_REPO_ROOT/$M1_SSH_UPDATE_POLICY")"
+  expected_before="$(jq -r '.allow[0].expected_attribute_values_before.source' "$M1_REPO_ROOT/$POLICY_SSH_UPDATE")"
+  expected_after="$(jq -r '.allow[0].expected_attribute_values.source' "$M1_REPO_ROOT/$POLICY_SSH_UPDATE")"
   plan_before="$(jq -r '[.resource_changes[]? | select(.address == "oci_core_network_security_group_security_rule.ssh_from_operator")][0].change.before.source // empty' "$ssh_recheck_json")"
   plan_after="$(jq -r '[.resource_changes[]? | select(.address == "oci_core_network_security_group_security_rule.ssh_from_operator")][0].change.after.source // empty' "$ssh_recheck_json")"
   rule_id="$(jq -r '[.resource_changes[]? | select(.address == "oci_core_network_security_group_security_rule.ssh_from_operator")][0].change.before.id // .change.after.id // empty' "$ssh_recheck_json")"
@@ -245,6 +325,23 @@ if [[ "$ssh_update_gate" -eq 1 ]]; then
       || fail_gate ssh-update-live-before "live rule source=[$live_source] (rule $rule_id) does not match the reviewed before-value [$expected_before] — the plan is stale; re-plan and re-review"
   else
     fail_gate ssh-update-live-before "live NSG rule listing failed (see logs/ssh-update-live-rules.err) — not treated as absence"
+  fi
+fi
+
+# Apply-time policy verification for EVERY plan class: metadata.safe_plan=PASS
+# is never a substitute for re-checking the saved binary plan's rendered JSON
+# against its reviewed policy immediately before execution. Dedicated classes
+# revalidate via the attribute-level checker in their own blocks below; a
+# general PLATFORM-APPLY plan revalidates here against the metadata-named
+# generic policy (identity already verified fail-closed above).
+if [[ "$plan_class" == "PLATFORM-APPLY" ]]; then
+  if "$M1_REPO_ROOT/$M1_SAFE_PLAN_SCRIPT" --policy "$M1_REPO_ROOT/$meta_safe_plan_policy" "$class_json" \
+       >"$M1_EVIDENCE_DIR/logs/platform-policy-recheck.log" 2>&1; then
+    m1_check PASS "platform-policy-recheck" "saved plan revalidated against the reviewed generic policy ($meta_safe_plan_policy)"
+  else
+    cat "$M1_EVIDENCE_DIR/logs/platform-policy-recheck.log" >&2
+    fail_gate platform-policy-recheck \
+      "the saved plan does not match the reviewed generic policy ($meta_safe_plan_policy) — REFUSING to execute (metadata.safe_plan is not evidence; the saved plan itself failed the policy)"
   fi
 fi
 

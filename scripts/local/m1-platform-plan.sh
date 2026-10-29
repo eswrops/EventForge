@@ -177,16 +177,22 @@ ingress_creates="$(jq -r '
 
 # Metadata (the reviewed contract consumed by m1-platform-apply.sh) -------------
 changes_total="$(grep -c . "$M1_EVIDENCE_DIR/plans/platform-$stamp.actions.txt" || true)"
+# Policy-content integrity binding: the metadata records the SHA-256 of the
+# EXACT policy file that authorized this plan at plan time; the apply gate
+# requires byte equality (and a committed working tree) before revalidating
+# the saved plan against it — an edited or substituted policy can never
+# silently re-authorize a saved plan.
+policy_sha="$(shasum -a 256 "$M1_REPO_ROOT/$M1_SAFE_PLAN_POLICY" | awk '{print $1}')"
 jq -n \
   --arg run_tag "$M1_RUN_TAG" --arg commit "$commit" --arg operator "$operator" \
   --arg plan "$plan_file" --arg plan_json "$plan_json" --arg plan_sha "$plan_sha" \
   --arg lineage "$state_lineage" --argjson serial "$state_serial" \
   --arg safe_plan "$safe_plan" --argjson import_updates "$import_updates" --argjson changes "$changes_total" \
-  --arg safe_plan_policy "$M1_SAFE_PLAN_POLICY" \
+  --arg safe_plan_policy "$M1_SAFE_PLAN_POLICY" --arg policy_sha "$policy_sha" \
   --arg timestamp "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   '{plan:$plan, plan_json:$plan_json, plan_sha256:$plan_sha, commit:$commit, operator:$operator,
     state_lineage:$lineage, state_serial:$serial, safe_plan:$safe_plan,
-    safe_plan_policy:$safe_plan_policy,
+    safe_plan_policy:$safe_plan_policy, safe_plan_policy_sha256:$policy_sha,
     proposed_import_updates:$import_updates, non_noop_changes:$changes,
     terraform_version:$tv, bucket:$bucket, state_key:$key,
     applied:false, apply_evidence:null, timestamp:$timestamp}' \
